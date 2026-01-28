@@ -324,9 +324,39 @@ ${truncatedText}
   }
 
   const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
+  if (data?.error) {
+    // Some providers return an error object as JSON even with HTTP 200.
+    const msg = typeof data.error === 'string' ? data.error : (data.error.message || JSON.stringify(data.error));
+    throw new Error(`Upstage LLM 오류: ${msg}`);
+  }
+
+  const choice0 = data?.choices?.[0];
+  const message0 = choice0?.message;
+  let content = message0?.content ?? choice0?.text;
+
+  // Some OpenAI-compatible APIs may return structured/array content.
+  if (Array.isArray(content)) {
+    content = content
+      .map((part) => {
+        if (!part) return '';
+        if (typeof part === 'string') return part;
+        return String(part.text ?? part.content ?? '');
+      })
+      .join('');
+  } else if (content && typeof content === 'object') {
+    content = String(content.text ?? content.content ?? '');
+  }
+
+  if (typeof content === 'string') content = content.trim();
+
   if (!content) {
-    throw new Error('모델 응답이 비어있습니다.');
+    const finish = choice0?.finish_reason ?? 'n/a';
+    const id = data?.id ?? 'n/a';
+    const usage = data?.usage ? JSON.stringify(data.usage) : 'n/a';
+    throw new Error(
+      `모델 응답이 비어있습니다. (id=${id}, finish_reason=${finish}, usage=${usage})\n` +
+      `해결 팁: (1) Upstage API Key 권한/쿼터 확인 (2) 모델명이 solar-pro3인지 확인 (3) PDF가 너무 길면 일부만 업로드/분석 (4) 브라우저 개발자도구 Network에서 /v1/chat/completions 응답을 확인`
+    );
   }
 
   // Parse JSON from response (handle potential code blocks)
