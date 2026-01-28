@@ -313,7 +313,7 @@ ${truncatedText}
 
   // First try: richer output but still bounded.
   const prompt = buildPrompt({ maxPerCategory: 4, maxExampleChars: 240 });
-  let response = await callUpstage(prompt, 2500);
+  let response = await callUpstage(prompt, 1400);
 
   if (!response.ok) {
     const error = await response.text();
@@ -351,7 +351,7 @@ ${truncatedText}
   if (!content || finish === 'length') {
     // Retry: smaller per-category output and shorter examples.
     const retryPrompt = buildPrompt({ maxPerCategory: 2, maxExampleChars: 160 });
-    response = await callUpstage(retryPrompt, 1500);
+    response = await callUpstage(retryPrompt, 900);
     if (!response.ok) {
       const error = await response.text();
       throw new Error(`Upstage LLM 오류(재시도): ${error}`);
@@ -385,18 +385,45 @@ ${truncatedText}
     );
   }
 
-  // Parse JSON from response (handle potential code blocks)
-  try {
-    let jsonStr = content;
-    if (content.includes('```json')) {
-      jsonStr = content.split('```json')[1].split('```')[0].trim();
-    } else if (content.includes('```')) {
-      jsonStr = content.split('```')[1].split('```')[0].trim();
+  function extractJsonString(raw) {
+    let s = String(raw || '').trim();
+    if (!s) return '';
+
+    // Remove fenced code blocks.
+    if (s.includes('```json')) {
+      s = s.split('```json')[1].split('```')[0].trim();
+    } else if (s.includes('```')) {
+      s = s.split('```')[1].split('```')[0].trim();
     }
-    return JSON.parse(jsonStr);
+
+    // If the model added extra text, try to grab the JSON object region.
+    const firstBrace = s.indexOf('{');
+    const lastBrace = s.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      s = s.slice(firstBrace, lastBrace + 1).trim();
+    }
+    return s;
+  }
+
+  // Parse JSON from response
+  try {
+    return JSON.parse(extractJsonString(content));
   } catch (e) {
-    console.error('JSON parse error:', e, content);
-    throw new Error('응답 파싱 오류. 다시 시도해주세요.');
+    // One more strict retry for cases where JSON was truncated or wrapped.
+    try {
+      const strictPrompt = buildPrompt({ maxPerCategory: 2, maxExampleChars: 140 });
+      const strictResp = await callUpstage(strictPrompt, 800);
+      if (!strictResp.ok) {
+        const error = await strictResp.text();
+        throw new Error(`Upstage LLM 오류(파싱 재시도): ${error}`);
+      }
+      const strictData = await strictResp.json();
+      const strictContent = strictData?.choices?.[0]?.message?.content ?? strictData?.choices?.[0]?.text;
+      return JSON.parse(extractJsonString(strictContent));
+    } catch (e2) {
+      console.error('JSON parse error:', e, content);
+      throw new Error('응답 파싱 오류. 다시 시도해주세요. (PDF를 일부 페이지로 줄이면 안정적입니다)');
+    }
   }
 }
 
