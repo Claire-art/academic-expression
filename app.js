@@ -69,7 +69,63 @@ function cleanupJsonLikeString(raw) {
   if (!s) return '';
   // Remove trailing commas before } or ]
   s = s.replace(/,\s*([}\]])/g, '$1');
+
+  // Fix missing commas between JSON values (e.g., "..." } "next" or } { )
+  s = insertMissingCommasOutsideStrings(s);
   return s;
+}
+
+function insertMissingCommasOutsideStrings(input) {
+  const s = String(input || '');
+  if (!s) return '';
+
+  let out = '';
+  let inString = false;
+  let escape = false;
+
+  const nextNonWs = (from) => {
+    for (let j = from; j < s.length; j++) {
+      const ch = s[j];
+      if (!/\s/.test(ch)) return { ch, idx: j };
+    }
+    return { ch: '', idx: s.length };
+  };
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    out += ch;
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === '}' || ch === ']') {
+      const { ch: nxt } = nextNonWs(i + 1);
+      if (!nxt) continue;
+      // If another value starts immediately, a comma is required.
+      if (nxt === '{' || nxt === '[' || nxt === '"') {
+        // Avoid duplicating commas if already present.
+        const { ch: immediate } = nextNonWs(i + 1);
+        if (immediate !== ',') {
+          out += ',';
+        }
+      }
+    }
+  }
+
+  return out;
 }
 
 function parseJsonRobust(raw) {
