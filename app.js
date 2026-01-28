@@ -288,36 +288,56 @@ ${truncatedText}
 
 ## 주의사항
 - 각 카테고리에서 최소 1개, 최대 ${maxPerCategory}개의 표현을 추출하세요
+- 전체 expressions 개수는 10개를 넘지 마세요 (길어지면 앞의 항목만 출력)
 - 실제 논문에서 사용된 표현만 추출하세요
 - 한국어 설명을 포함하여 학습에 도움이 되게 해주세요
 - example은 최대 ${maxExampleChars}자 이내로 짧게 유지하세요
 - JSON 형식만 출력하고 다른 텍스트는 포함하지 마세요`;
 
-  async function callUpstage(prompt, maxTokens) {
+  const SYSTEM_JSON_ONLY =
+    'You are a strict JSON generator. Respond with JSON only. Do not include any explanation, markdown, or code fences. Do not include hidden reasoning.';
+
+  async function callUpstage(prompt, maxTokens, { forceJson } = { forceJson: false }) {
+    const body = {
+      model: 'solar-pro3',
+      messages: [
+        { role: 'system', content: SYSTEM_JSON_ONLY },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.1,
+      max_tokens: maxTokens,
+      stream: false
+    };
+
+    // Some OpenAI-compatible APIs support JSON-only enforcement.
+    if (forceJson) {
+      body.response_format = { type: 'json_object' };
+    }
+
     const response = await fetch('https://api.upstage.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${state.upstageKey}`
       },
-      body: JSON.stringify({
-        model: 'solar-pro3',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
-        max_tokens: maxTokens,
-        stream: false
-      })
+      body: JSON.stringify(body)
     });
     return response;
   }
 
   // First try: richer output but still bounded.
-  const prompt = buildPrompt({ maxPerCategory: 4, maxExampleChars: 240 });
-  let response = await callUpstage(prompt, 1400);
+  const prompt = buildPrompt({ maxPerCategory: 2, maxExampleChars: 180 });
 
+  // Try JSON-enforced mode first; if unsupported, fall back.
+  let response = await callUpstage(prompt, 700, { forceJson: true });
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Upstage LLM 오류: ${error}`);
+    const textErr = await response.text();
+    // If server rejects response_format, retry without it.
+    if (String(textErr).toLowerCase().includes('response_format') || String(textErr).toLowerCase().includes('unknown')) {
+      response = await callUpstage(prompt, 700, { forceJson: false });
+    } else {
+      throw new Error(`Upstage LLM 오류: ${textErr}`);
+    }
   }
 
   let data = await response.json();
@@ -350,8 +370,16 @@ ${truncatedText}
   const finish = choice0?.finish_reason;
   if (!content || finish === 'length') {
     // Retry: smaller per-category output and shorter examples.
-    const retryPrompt = buildPrompt({ maxPerCategory: 2, maxExampleChars: 160 });
-    response = await callUpstage(retryPrompt, 900);
+    const retryPrompt = buildPrompt({ maxPerCategory: 1, maxExampleChars: 140 });
+    response = await callUpstage(retryPrompt, 450, { forceJson: true });
+    if (!response.ok) {
+      const textErr = await response.text();
+      if (String(textErr).toLowerCase().includes('response_format') || String(textErr).toLowerCase().includes('unknown')) {
+        response = await callUpstage(retryPrompt, 450, { forceJson: false });
+      } else {
+        throw new Error(`Upstage LLM 오류(재시도): ${textErr}`);
+      }
+    }
     if (!response.ok) {
       const error = await response.text();
       throw new Error(`Upstage LLM 오류(재시도): ${error}`);
@@ -379,8 +407,16 @@ ${truncatedText}
     const id = data?.id ?? 'n/a';
     const finish2 = data?.choices?.[0]?.finish_reason ?? 'n/a';
     const usage = data?.usage ? JSON.stringify(data.usage) : 'n/a';
+    const choicePreview = (() => {
+      try {
+        return JSON.stringify(data?.choices?.[0] ?? {}).slice(0, 900);
+      } catch {
+        return 'n/a';
+      }
+    })();
     throw new Error(
       `모델 응답이 비어있습니다. (id=${id}, finish_reason=${finish2}, usage=${usage})\n` +
+      `choices[0] 미리보기: ${choicePreview}\n` +
       `해결 팁: (1) Upstage API Key 권한/쿼터 확인 (2) PDF가 너무 길면 일부만 분석 (3) 개발자도구 Network에서 /v1/chat/completions 응답 확인`
     );
   }
