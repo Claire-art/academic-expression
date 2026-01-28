@@ -242,11 +242,14 @@ async function extractTextFromPDF(file) {
 // ----------------------------
 async function extractExpressions(text) {
   // Keep prompt size bounded.
-  const truncatedText = text.length > 14000
-    ? text.substring(0, 14000) + '\n\n[텍스트가 길어 일부만 분석됨]'
+  const truncatedText = text.length > 12000
+    ? text.substring(0, 12000) + '\n\n[텍스트가 길어 일부만 분석됨]'
     : text;
 
-  const prompt = `당신은 학술 논문 작성 전문가입니다. 주어진 논문 텍스트에서 영어 학술 글쓰기에 유용한 표현들을 추출해주세요.
+  // NOTE:
+  // - We intentionally keep the model output small to avoid truncation (finish_reason=length).
+  // - Verbs/transitions are expanded locally from sentences anyway.
+  const buildPrompt = ({ maxPerCategory, maxExampleChars }) => `당신은 학술 논문 작성 전문가입니다. 주어진 논문 텍스트에서 영어 학술 글쓰기에 유용한 "표현"만 추출해주세요.
 
 ## 추출 기준
 1. **연구 배경 제시** - 관심 증가, 중요성 강조 표현
@@ -257,8 +260,6 @@ async function extractExpressions(text) {
 6. **해석/논의** - 의미 부여, 기존 연구와 비교 표현
 7. **한계점 인정** - 연구 제한점 인정 표현
 8. **향후 연구 제안** - 후속 연구 방향 제안 표현
-9. **연결어/전환 표현** - However, Furthermore, Nevertheless 등 (가능하면 많이)
-10. **학술 동사** - demonstrate, investigate, reveal, indicate 등 (가능하면 많이)
 
 ## 출력 형식
 반드시 아래 JSON 형식으로만 출력하세요. 다른 설명은 추가하지 마세요.
@@ -278,52 +279,48 @@ async function extractExpressions(text) {
       ]
     }
   ],
-  "academic_verbs": [
-    {
-      "verb": "동사",
-      "meaning": "의미 (한국어)",
-      "example": "예문"
-    }
-  ],
-  "transition_words": [
-    {
-      "word": "연결어",
-      "usage": "사용 상황",
-      "example": "예문"
-    }
-  ]
+  "academic_verbs": [],
+  "transition_words": []
 }
 
 ## 논문 텍스트
 ${truncatedText}
 
 ## 주의사항
-- 각 카테고리에서 최소 2개, 최대 6개의 표현을 추출하세요
+- 각 카테고리에서 최소 1개, 최대 ${maxPerCategory}개의 표현을 추출하세요
 - 실제 논문에서 사용된 표현만 추출하세요
 - 한국어 설명을 포함하여 학습에 도움이 되게 해주세요
+- example은 최대 ${maxExampleChars}자 이내로 짧게 유지하세요
 - JSON 형식만 출력하고 다른 텍스트는 포함하지 마세요`;
 
-  const response = await fetch('https://api.upstage.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${state.upstageKey}`
-    },
-    body: JSON.stringify({
-      model: 'solar-pro3',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      max_tokens: 4000,
-      stream: false
-    })
-  });
+  async function callUpstage(prompt, maxTokens) {
+    const response = await fetch('https://api.upstage.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.upstageKey}`
+      },
+      body: JSON.stringify({
+        model: 'solar-pro3',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: maxTokens,
+        stream: false
+      })
+    });
+    return response;
+  }
+
+  // First try: richer output but still bounded.
+  const prompt = buildPrompt({ maxPerCategory: 4, maxExampleChars: 240 });
+  let response = await callUpstage(prompt, 2500);
 
   if (!response.ok) {
     const error = await response.text();
     throw new Error(`Upstage LLM 오류: ${error}`);
   }
 
-  const data = await response.json();
+  let data = await response.json();
   if (data?.error) {
     // Some providers return an error object as JSON even with HTTP 200.
     const msg = typeof data.error === 'string' ? data.error : (data.error.message || JSON.stringify(data.error));
@@ -349,13 +346,42 @@ ${truncatedText}
 
   if (typeof content === 'string') content = content.trim();
 
+  // If the provider hit length limits, retry once with a stricter/smaller prompt.
+  const finish = choice0?.finish_reason;
+  if (!content || finish === 'length') {
+    // Retry: smaller per-category output and shorter examples.
+    const retryPrompt = buildPrompt({ maxPerCategory: 2, maxExampleChars: 160 });
+    response = await callUpstage(retryPrompt, 1500);
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Upstage LLM 오류(재시도): ${error}`);
+    }
+    data = await response.json();
+    const retryChoice0 = data?.choices?.[0];
+    const retryMessage0 = retryChoice0?.message;
+    let retryContent = retryMessage0?.content ?? retryChoice0?.text;
+    if (Array.isArray(retryContent)) {
+      retryContent = retryContent
+        .map((part) => {
+          if (!part) return '';
+          if (typeof part === 'string') return part;
+          return String(part.text ?? part.output_text ?? part.content ?? '');
+        })
+        .join('');
+    } else if (retryContent && typeof retryContent === 'object') {
+      retryContent = String(retryContent.text ?? retryContent.output_text ?? retryContent.content ?? '');
+    }
+    if (typeof retryContent === 'string') retryContent = retryContent.trim();
+    content = retryContent;
+  }
+
   if (!content) {
-    const finish = choice0?.finish_reason ?? 'n/a';
     const id = data?.id ?? 'n/a';
+    const finish2 = data?.choices?.[0]?.finish_reason ?? 'n/a';
     const usage = data?.usage ? JSON.stringify(data.usage) : 'n/a';
     throw new Error(
-      `모델 응답이 비어있습니다. (id=${id}, finish_reason=${finish}, usage=${usage})\n` +
-      `해결 팁: (1) Upstage API Key 권한/쿼터 확인 (2) 모델명이 solar-pro3인지 확인 (3) PDF가 너무 길면 일부만 업로드/분석 (4) 브라우저 개발자도구 Network에서 /v1/chat/completions 응답을 확인`
+      `모델 응답이 비어있습니다. (id=${id}, finish_reason=${finish2}, usage=${usage})\n` +
+      `해결 팁: (1) Upstage API Key 권한/쿼터 확인 (2) PDF가 너무 길면 일부만 분석 (3) 개발자도구 Network에서 /v1/chat/completions 응답 확인`
     );
   }
 
