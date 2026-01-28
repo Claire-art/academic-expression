@@ -10,13 +10,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="styles.css?v=20260128-3" />
+  <link rel="stylesheet" href="styles.css?v=20260128-4" />
 
   <!-- PDF.js (required by app.js) -->
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
   <!-- App logic -->
-  <script defer src="app.js?v=20260128-3"></script>
+  <script defer src="app.js?v=20260128-4"></script>
 </head>
 
 <body>
@@ -38,7 +38,16 @@
           <input type="password" id="upstage-key" placeholder="up_xxxxxxxx" />
           <div class="api-status">
             <span class="status-dot" id="upstage-status"></span>
-            <span>OCR + 표현 추출에 사용됩니다</span>
+            <span>PDF OCR(문서 읽기)에 사용됩니다</span>
+          </div>
+        </div>
+
+        <div class="api-section">
+          <label for="openai-key">OpenAI API Key</label>
+          <input type="password" id="openai-key" placeholder="sk-..." />
+          <div class="api-status">
+            <span class="status-dot" id="openai-status"></span>
+            <span>핵심 표현/정리에 사용됩니다</span>
           </div>
         </div>
       </div>

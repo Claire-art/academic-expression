@@ -16,6 +16,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 // ----------------------------
 let state = {
   upstageKey: '',
+  openaiKey: '',
   file: null,
   extractedData: null,
   pdfIndex: null,
@@ -28,6 +29,8 @@ let state = {
 // ----------------------------
 const upstageKeyInput = document.getElementById('upstage-key');
 const upstageStatus = document.getElementById('upstage-status');
+const openaiKeyInput = document.getElementById('openai-key');
+const openaiStatus = document.getElementById('openai-status');
 const uploadZone = document.getElementById('upload-zone');
 const fileInput = document.getElementById('file-input');
 const fileInfo = document.getElementById('file-info');
@@ -44,6 +47,12 @@ const tabContent = document.getElementById('tab-content');
 upstageKeyInput.addEventListener('input', (e) => {
   state.upstageKey = e.target.value;
   upstageStatus.classList.toggle('active', e.target.value.length > 0);
+  updateAnalyzeButton();
+});
+
+openaiKeyInput?.addEventListener('input', (e) => {
+  state.openaiKey = e.target.value;
+  openaiStatus?.classList.toggle('active', e.target.value.length > 0);
   updateAnalyzeButton();
 });
 
@@ -81,8 +90,8 @@ function handleFile(file) {
 }
 
 function updateAnalyzeButton() {
-  // Upstage is required for BOTH OCR and LLM analysis.
-  const ready = state.upstageKey && state.file;
+  // Upstage is required for OCR; OpenAI is required for expression extraction.
+  const ready = state.upstageKey && state.openaiKey && state.file;
   analyzeBtn.disabled = !ready;
 }
 
@@ -106,7 +115,7 @@ analyzeBtn.addEventListener('click', async () => {
     state.extractionMethod = extracted.method;
     setProgress(1, 'done');
 
-    // Step 2: Upstage LLM analysis
+    // Step 2: GPT analysis (core expressions)
     setProgress(2, 'active');
     const analysis = await extractExpressions(text);
     setProgress(2, 'done');
@@ -237,19 +246,18 @@ async function extractTextFromPDF(file) {
 }
 
 // ----------------------------
-// Upstage LLM analysis (OpenAI-compatible endpoint)
-// Model: solar-pro3
+// OpenAI GPT analysis (core expressions)
 // ----------------------------
 async function extractExpressions(text) {
-  // Keep prompt size bounded.
-  const truncatedText = text.length > 12000
-    ? text.substring(0, 12000) + '\n\n[텍스트가 길어 일부만 분석됨]'
+  if (!state.openaiKey) {
+    throw new Error('OpenAI API Key가 필요합니다.');
+  }
+
+  const truncatedText = text.length > 14000
+    ? text.substring(0, 14000) + '\n\n[텍스트가 길어 일부만 분석됨]'
     : text;
 
-  // NOTE:
-  // - We intentionally keep the model output small to avoid truncation (finish_reason=length).
-  // - Verbs/transitions are expanded locally from sentences anyway.
-  const buildPrompt = ({ maxPerCategory, maxExampleChars }) => `당신은 학술 논문 작성 전문가입니다. 주어진 논문 텍스트에서 영어 학술 글쓰기에 유용한 "표현"만 추출해주세요.
+  const prompt = `당신은 학술 논문 작성 전문가입니다. 주어진 논문 텍스트에서 영어 학술 글쓰기에 유용한 표현들을 추출해주세요.
 
 ## 추출 기준
 1. **연구 배경 제시** - 관심 증가, 중요성 강조 표현
@@ -260,6 +268,8 @@ async function extractExpressions(text) {
 6. **해석/논의** - 의미 부여, 기존 연구와 비교 표현
 7. **한계점 인정** - 연구 제한점 인정 표현
 8. **향후 연구 제안** - 후속 연구 방향 제안 표현
+9. **연결어/전환 표현** - However, Furthermore, Nevertheless 등
+10. **학술 동사** - demonstrate, investigate, reveal, indicate 등
 
 ## 출력 형식
 반드시 아래 JSON 형식으로만 출력하세요. 다른 설명은 추가하지 마세요.
@@ -279,245 +289,39 @@ async function extractExpressions(text) {
       ]
     }
   ],
-  "academic_verbs": [],
-  "transition_words": []
+  "academic_verbs": [
+    {
+      "verb": "동사",
+      "meaning": "의미 (한국어)",
+      "example": "예문"
+    }
+  ],
+  "transition_words": [
+    {
+      "word": "연결어",
+      "usage": "사용 상황",
+      "example": "예문"
+    }
+  ]
 }
 
 ## 논문 텍스트
 ${truncatedText}
 
 ## 주의사항
-- 각 카테고리에서 최소 1개, 최대 ${maxPerCategory}개의 표현을 추출하세요
-- 전체 expressions 개수는 10개를 넘지 마세요 (길어지면 앞의 항목만 출력)
+- 각 카테고리에서 최소 2개, 최대 5개의 표현을 추출하세요
 - 실제 논문에서 사용된 표현만 추출하세요
 - 한국어 설명을 포함하여 학습에 도움이 되게 해주세요
-- example은 최대 ${maxExampleChars}자 이내로 짧게 유지하세요
 - JSON 형식만 출력하고 다른 텍스트는 포함하지 마세요`;
-
-  const SYSTEM_JSON_ONLY =
-    'You are a strict JSON generator. Respond with JSON only. Do not include any explanation, markdown, or code fences. Do not include hidden reasoning.';
-
-  async function callUpstage(prompt, maxTokens, { forceJson } = { forceJson: false }) {
-    const body = {
-      model: 'solar-pro3',
-      messages: [
-        { role: 'system', content: SYSTEM_JSON_ONLY },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.1,
-      max_tokens: maxTokens,
-      stream: false
-    };
-
-    // Some OpenAI-compatible APIs support JSON-only enforcement.
-    if (forceJson) {
-      body.response_format = { type: 'json_object' };
-    }
-
-    const response = await fetch('https://api.upstage.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.upstageKey}`
-      },
-      body: JSON.stringify(body)
-    });
-    return response;
-  }
-
-  async function callUpstageStream(prompt, maxTokens, { forceJson } = { forceJson: false }) {
-    const body = {
-      model: 'solar-pro3',
-      messages: [
-        { role: 'system', content: SYSTEM_JSON_ONLY },
-        { role: 'user', content: prompt }
-      ],
-      temperature: 0.1,
-      max_tokens: maxTokens,
-      stream: true
-    };
-    if (forceJson) {
-      body.response_format = { type: 'json_object' };
-    }
-
-    const response = await fetch('https://api.upstage.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'text/event-stream',
-        'Authorization': `Bearer ${state.upstageKey}`
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`Upstage LLM 오류(stream): ${err}`);
-    }
-
-    // OpenAI-compatible streaming uses SSE: lines starting with "data: {json}".
-    const reader = response.body?.getReader?.();
-    if (!reader) throw new Error('브라우저가 스트리밍 응답을 처리할 수 없습니다.');
-
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-    let out = '';
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // Process complete lines.
-      let idx;
-      while ((idx = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, idx).trimEnd();
-        buffer = buffer.slice(idx + 1);
-
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        if (!trimmed.startsWith('data:')) continue;
-
-        const payload = trimmed.slice('data:'.length).trim();
-        if (payload === '[DONE]') {
-          return out.trim();
-        }
-
-        try {
-          const json = JSON.parse(payload);
-          const delta = json?.choices?.[0]?.delta;
-          const chunkText = delta?.content ?? delta?.text ?? '';
-          if (chunkText) out += chunkText;
-        } catch {
-          // Ignore malformed chunk; keep reading.
-        }
-      }
-    }
-
-    return out.trim();
-  }
-
-  // First try: richer output but still bounded.
-  const prompt = buildPrompt({ maxPerCategory: 2, maxExampleChars: 180 });
-
-  // Try JSON-enforced mode first; if unsupported, fall back.
-  let response = await callUpstage(prompt, 700, { forceJson: true });
-  if (!response.ok) {
-    const textErr = await response.text();
-    // If server rejects response_format, retry without it.
-    if (String(textErr).toLowerCase().includes('response_format') || String(textErr).toLowerCase().includes('unknown')) {
-      response = await callUpstage(prompt, 700, { forceJson: false });
-    } else {
-      throw new Error(`Upstage LLM 오류: ${textErr}`);
-    }
-  }
-
-  let data = await response.json();
-  if (data?.error) {
-    // Some providers return an error object as JSON even with HTTP 200.
-    const msg = typeof data.error === 'string' ? data.error : (data.error.message || JSON.stringify(data.error));
-    throw new Error(`Upstage LLM 오류: ${msg}`);
-  }
-
-  const choice0 = data?.choices?.[0];
-  const message0 = choice0?.message;
-  let content = message0?.content ?? choice0?.text;
-  // Upstage may place text into message.reasoning while leaving content empty.
-  if ((!content || (typeof content === 'string' && !content.trim())) && message0?.reasoning) {
-    content = message0.reasoning;
-  }
-
-  // Some OpenAI-compatible APIs may return structured/array content.
-  if (Array.isArray(content)) {
-    content = content
-      .map((part) => {
-        if (!part) return '';
-        if (typeof part === 'string') return part;
-        return String(part.text ?? part.content ?? '');
-      })
-      .join('');
-  } else if (content && typeof content === 'object') {
-    content = String(content.text ?? content.content ?? '');
-  }
-
-  if (typeof content === 'string') content = content.trim();
-
-  // If the provider hit length limits, retry once with a stricter/smaller prompt.
-  const finish = choice0?.finish_reason;
-  if (!content || finish === 'length') {
-    // Retry: smaller per-category output and shorter examples.
-    const retryPrompt = buildPrompt({ maxPerCategory: 1, maxExampleChars: 140 });
-    response = await callUpstage(retryPrompt, 450, { forceJson: true });
-    if (!response.ok) {
-      const textErr = await response.text();
-      if (String(textErr).toLowerCase().includes('response_format') || String(textErr).toLowerCase().includes('unknown')) {
-        response = await callUpstage(retryPrompt, 450, { forceJson: false });
-      } else {
-        throw new Error(`Upstage LLM 오류(재시도): ${textErr}`);
-      }
-    }
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Upstage LLM 오류(재시도): ${error}`);
-    }
-    data = await response.json();
-    const retryChoice0 = data?.choices?.[0];
-    const retryMessage0 = retryChoice0?.message;
-    let retryContent = retryMessage0?.content ?? retryChoice0?.text;
-    if (Array.isArray(retryContent)) {
-      retryContent = retryContent
-        .map((part) => {
-          if (!part) return '';
-          if (typeof part === 'string') return part;
-          return String(part.text ?? part.output_text ?? part.content ?? '');
-        })
-        .join('');
-    } else if (retryContent && typeof retryContent === 'object') {
-      retryContent = String(retryContent.text ?? retryContent.output_text ?? retryContent.content ?? '');
-    }
-    if (typeof retryContent === 'string') retryContent = retryContent.trim();
-    content = retryContent;
-
-    // If still empty (or reasoning-only), fall back to streaming to capture delta.content.
-    if (!content) {
-      try {
-        content = await callUpstageStream(retryPrompt, 650, { forceJson: false });
-      } catch (e) {
-        console.warn('Streaming fallback failed:', e);
-      }
-    }
-  }
-
-  if (!content) {
-    const id = data?.id ?? 'n/a';
-    const finish2 = data?.choices?.[0]?.finish_reason ?? 'n/a';
-    const usage = data?.usage ? JSON.stringify(data.usage) : 'n/a';
-    const choicePreview = (() => {
-      try {
-        return JSON.stringify(data?.choices?.[0] ?? {}).slice(0, 900);
-      } catch {
-        return 'n/a';
-      }
-    })();
-    throw new Error(
-      `모델 응답이 비어있습니다. (id=${id}, finish_reason=${finish2}, usage=${usage})\n` +
-      `choices[0] 미리보기: ${choicePreview}\n` +
-      `해결 팁: (1) Upstage API Key 권한/쿼터 확인 (2) PDF가 너무 길면 일부만 분석 (3) 개발자도구 Network에서 /v1/chat/completions 응답 확인`
-    );
-  }
 
   function extractJsonString(raw) {
     let s = String(raw || '').trim();
     if (!s) return '';
-
-    // Remove fenced code blocks.
     if (s.includes('```json')) {
       s = s.split('```json')[1].split('```')[0].trim();
     } else if (s.includes('```')) {
       s = s.split('```')[1].split('```')[0].trim();
     }
-
-    // If the model added extra text, try to grab the JSON object region.
     const firstBrace = s.indexOf('{');
     const lastBrace = s.lastIndexOf('}');
     if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
@@ -526,25 +330,62 @@ ${truncatedText}
     return s;
   }
 
-  // Parse JSON from response
+  const body = {
+    model: 'gpt-4o-mini',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.3,
+    max_tokens: 2500
+  };
+
+  // If the model supports JSON-only mode, it tends to be more reliable.
+  body.response_format = { type: 'json_object' };
+
+  let response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${state.openaiKey}`
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    // If response_format is rejected, retry without it.
+    if (String(errText).toLowerCase().includes('response_format')) {
+      delete body.response_format;
+      response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${state.openaiKey}`
+        },
+        body: JSON.stringify(body)
+      });
+    } else {
+      throw new Error(`OpenAI API 오류: ${errText}`);
+    }
+  }
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`OpenAI API 오류: ${errText}`);
+  }
+
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) {
+    const id = data?.id ?? 'n/a';
+    const finish = data?.choices?.[0]?.finish_reason ?? 'n/a';
+    const usage = data?.usage ? JSON.stringify(data.usage) : 'n/a';
+    throw new Error(`OpenAI 모델 응답이 비어있습니다. (id=${id}, finish_reason=${finish}, usage=${usage})`);
+  }
+
   try {
     return JSON.parse(extractJsonString(content));
   } catch (e) {
-    // One more strict retry for cases where JSON was truncated or wrapped.
-    try {
-      const strictPrompt = buildPrompt({ maxPerCategory: 2, maxExampleChars: 140 });
-      const strictResp = await callUpstage(strictPrompt, 800);
-      if (!strictResp.ok) {
-        const error = await strictResp.text();
-        throw new Error(`Upstage LLM 오류(파싱 재시도): ${error}`);
-      }
-      const strictData = await strictResp.json();
-      const strictContent = strictData?.choices?.[0]?.message?.content ?? strictData?.choices?.[0]?.text;
-      return JSON.parse(extractJsonString(strictContent));
-    } catch (e2) {
-      console.error('JSON parse error:', e, content);
-      throw new Error('응답 파싱 오류. 다시 시도해주세요. (PDF를 일부 페이지로 줄이면 안정적입니다)');
-    }
+    console.error('JSON parse error:', e, content);
+    throw new Error('응답 파싱 오류. 다시 시도해주세요.');
   }
 }
 
