@@ -414,7 +414,7 @@ async function extractExpressions(text) {
     ? text.substring(0, 14000) + '\n\n[텍스트가 길어 일부만 분석됨]'
     : text;
 
-  const prompt = `당신은 학술 논문 작성 전문가이자 영어 글쓰기 튜터입니다. 주어진 논문 텍스트에서 영어 학술 글쓰기에 유용한 표현들을 추출하고, 학습자가 실제로 활용할 수 있도록 설명을 덧붙여주세요.
+  const promptFull = `당신은 학술 논문 작성 전문가이자 영어 글쓰기 튜터입니다. 주어진 논문 텍스트에서 영어 학술 글쓰기에 유용한 표현들을 추출하고, 학습자가 실제로 활용할 수 있도록 설명을 덧붙여주세요.
 
 중요: 내부적으로는 단계적으로 충분히 생각하되(Chain-of-Thought), 출력에는 사고 과정을 절대 포함하지 말고 **최종 JSON만** 출력하세요.
 
@@ -479,62 +479,176 @@ ${truncatedText}
 - 표현/팁은 과장하지 말고, 논문 문체(톤/완곡함/범위 제한)에 맞게 안내하세요
 - JSON 형식만 출력하고 다른 텍스트는 포함하지 마세요`;
 
-  const body = {
-    model: 'gpt-4o-mini',
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0.3,
-    max_tokens: 2500
-  };
+  // Compact retry prompt to avoid truncation.
+  const promptCompact = `당신은 학술 논문 작성 전문가이자 영어 글쓰기 튜터입니다.
 
-  // If the model supports JSON-only mode, it tends to be more reliable.
-  body.response_format = { type: 'json_object' };
+중요: 내부적으로는 단계적으로 충분히 생각하되(Chain-of-Thought), 출력에는 사고 과정을 절대 포함하지 말고 **최종 JSON만** 출력하세요.
 
-  let response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${state.openaiKey}`
-    },
-    body: JSON.stringify(body)
-  });
+요청: 아래 논문 텍스트에서 영어 학술 글쓰기에 유용한 표현들을 JSON으로 추출하세요.
 
-  if (!response.ok) {
-    const errText = await response.text();
-    // If response_format is rejected, retry without it.
-    if (String(errText).toLowerCase().includes('response_format')) {
-      delete body.response_format;
-      response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${state.openaiKey}`
-        },
-        body: JSON.stringify(body)
-      });
-    } else {
+제약(중요):
+- 섹션은 최대 6개
+- 섹션당 표현은 1~3개
+- 예문(example)은 짧게(가능하면 1문장) 유지
+- JSON 외 텍스트 금지
+
+출력 스키마는 아래와 동일합니다:
+{
+  "sections": [
+    {
+      "category": "카테고리명",
+      "category_en": "Category Name in English",
+      "purpose": "이 카테고리가 어떤 문단/상황에서 쓰이는지 (한국어)",
+      "why_this_matters": "왜 이 카테고리 표현을 굳이 추출/학습해야 하는지 (한국어)",
+      "how_to_apply": "실전 글쓰기에서 어떻게 활용/변형하면 좋은지 (한국어, 팁/주의점)",
+      "expressions": [
+        {
+          "expression": "표현",
+          "usage": "사용 상황(한국어)",
+          "why_important": "중요성(한국어)",
+          "how_to_use": "활용 팁(한국어)",
+          "example": "짧은 예문(논문에서 발췌)",
+          "difficulty": "basic|intermediate|advanced"
+        }
+      ]
+    }
+  ],
+  "academic_verbs": [{"verb":"","meaning":"","example":""}],
+  "transition_words": [{"word":"","usage":"","example":""}]
+}
+
+논문 텍스트:
+${truncatedText}`;
+
+  async function callOpenAI(promptText, maxTokens) {
+    const body = {
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: promptText }],
+      temperature: 0.3,
+      max_tokens: maxTokens
+    };
+
+    // If the model supports JSON-only mode, it tends to be more reliable.
+    body.response_format = { type: 'json_object' };
+
+    let response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.openaiKey}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      // If response_format is rejected, retry without it.
+      if (String(errText).toLowerCase().includes('response_format')) {
+        delete body.response_format;
+        response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${state.openaiKey}`
+          },
+          body: JSON.stringify(body)
+        });
+      } else {
+        throw new Error(`OpenAI API 오류: ${errText}`);
+      }
+    }
+
+    if (!response.ok) {
+      const errText = await response.text();
       throw new Error(`OpenAI API 오류: ${errText}`);
     }
-  }
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`OpenAI API 오류: ${errText}`);
-  }
-
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) {
-    const id = data?.id ?? 'n/a';
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content;
     const finish = data?.choices?.[0]?.finish_reason ?? 'n/a';
     const usage = data?.usage ? JSON.stringify(data.usage) : 'n/a';
-    throw new Error(`OpenAI 모델 응답이 비어있습니다. (id=${id}, finish_reason=${finish}, usage=${usage})`);
+    const id = data?.id ?? 'n/a';
+
+    if (!content) {
+      throw new Error(`OpenAI 모델 응답이 비어있습니다. (id=${id}, finish_reason=${finish}, usage=${usage})`);
+    }
+
+    return { content, finish, usage, id };
   }
 
-  try {
+  async function repairJsonWithModel(broken) {
+    const snippet = String(broken || '').slice(0, 12000);
+    const repairPrompt = `당신은 JSON 포맷터입니다.
+
+아래 텍스트는 모델이 생성한 JSON이지만, 구두점/쉼표/따옴표/중괄호가 일부 깨져 파싱이 실패합니다.
+
+요청:
+- 아래 내용을 바탕으로, 의미를 유지하면서 **유효한 JSON**으로 복구하세요.
+- 출력은 반드시 JSON 하나만. 코드블록/설명 금지.
+- 스키마는 다음을 따르세요:
+{
+  "sections": [
+    {
+      "category": "",
+      "category_en": "",
+      "purpose": "",
+      "why_this_matters": "",
+      "how_to_apply": "",
+      "expressions": [
+        {
+          "expression": "",
+          "usage": "",
+          "why_important": "",
+          "how_to_use": "",
+          "example": "",
+          "difficulty": "basic|intermediate|advanced"
+        }
+      ]
+    }
+  ],
+  "academic_verbs": [{"verb":"","meaning":"","example":""}],
+  "transition_words": [{"word":"","usage":"","example":""}]
+}
+
+복구 대상 텍스트:
+"""
+${snippet}
+"""`;
+
+    const { content } = await callOpenAI(repairPrompt, 1400);
     return parseJsonRobust(content);
-  } catch (e) {
-    console.error('JSON parse error:', e);
-    throw e;
+  }
+
+  // Attempt 1: full prompt
+  const r1 = await callOpenAI(promptFull, 3000);
+  try {
+    return parseJsonRobust(r1.content);
+  } catch (e1) {
+    console.error('JSON parse error (attempt 1):', e1);
+    if (String(r1.finish).toLowerCase() === 'length') {
+      // Attempt 2: compact prompt if the response was likely truncated.
+      const r2 = await callOpenAI(promptCompact, 2200);
+      try {
+        return parseJsonRobust(r2.content);
+      } catch (e2) {
+        console.error('JSON parse error (attempt 2):', e2);
+        // Attempt 3: repair from last output
+        try {
+          return await repairJsonWithModel(r2.content);
+        } catch (e3) {
+          console.error('JSON repair failed:', e3);
+          throw new Error(`응답 파싱 오류. 다시 시도해주세요. (finish_reason=${r2.finish}, usage=${r2.usage})`);
+        }
+      }
+    }
+
+    // Not truncated: try a repair pass.
+    try {
+      return await repairJsonWithModel(r1.content);
+    } catch (e3) {
+      console.error('JSON repair failed:', e3);
+      throw new Error(`응답 파싱 오류. 다시 시도해주세요. (finish_reason=${r1.finish}, usage=${r1.usage})`);
+    }
   }
 }
 
