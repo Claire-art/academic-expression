@@ -6,13 +6,15 @@
 
 ## 🌐 Demo
 
-[Live Demo](https://your-username.github.io/academic-expression-learner/)
+[Live Demo](https://claire-art.github.io/academic-expression/)
 
 ## ✨ 주요 기능
 
-- 📄 **PDF 자동 파싱**: Upstage Document OCR로 논문 텍스트 추출
+- 📄 **PDF 텍스트 추출**: PDF.js로 페이지/줄 단위 텍스트 인덱싱 (필요 시 Upstage OCR로 폴백)
 - 🔍 **표현 추출**: OpenAI GPT로 학술 표현 패턴 분석
 - 📊 **카테고리 분류**: 연구 배경, 방법론, 결과, 논의 등 섹션별 정리
+- 🧾 **인용(페이지/줄)**: 추출된 예문이 논문 몇 페이지/몇 줄인지 자동 추정
+- 📝 **문장·숙어 정리**: 논문 문장을 추출하고, 재사용하기 좋은 학술 숙어/표현을 함께 정리
 - 📇 **Anki 내보내기**: 플래시카드로 표현 암기
 - 📝 **마크다운 내보내기**: 노션/옵시디언에 바로 붙여넣기
 
@@ -40,7 +42,7 @@ git push -u origin main
 
 ## 🔑 API 키 준비
 
-이 앱을 사용하려면 두 개의 API 키가 필요합니다:
+이 앱은 기본적으로 OpenAI API Key가 필요하며, 스캔 PDF(OCR 필요)일 때만 Upstage API Key가 필요합니다.
 
 ### Upstage API Key
 1. [Upstage Console](https://console.upstage.ai/) 접속
@@ -71,6 +73,8 @@ git push -u origin main
 | 한계점 인정 | 제한점 | "This study has several limitations..." |
 | 학술 동사 | 핵심 동사 | demonstrate, investigate, reveal |
 | 연결어 | 전환 표현 | However, Furthermore, Nevertheless |
+
+추가로, 각 예문/문장에 대해 가능한 경우 `p. X, line Y–Z` 형태의 인용 정보를 함께 제공합니다.
 
 ## 📁 프로젝트 구조
 

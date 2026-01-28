@@ -638,11 +638,11 @@
                 <h2 class="card-title">API 설정</h2>
                 
                 <div class="api-section">
-                    <label for="upstage-key">Upstage API Key</label>
+                    <label for="upstage-key">Upstage API Key (선택)</label>
                     <input type="password" id="upstage-key" placeholder="up_xxxxxxxx">
                     <div class="api-status">
                         <span class="status-dot" id="upstage-status"></span>
-                        <span>문서 파싱에 사용됩니다</span>
+                        <span>스캔 PDF(OCR 필요)일 때만 사용</span>
                     </div>
                 </div>
 
@@ -677,7 +677,7 @@
                 <div class="progress-container" id="progress-container">
                     <div class="progress-step" id="step-1">
                         <span class="step-indicator">1</span>
-                        <span>PDF 텍스트 추출 중...</span>
+                        <span>PDF 텍스트 추출 중... (페이지/줄 인덱싱)</span>
                     </div>
                     <div class="progress-step" id="step-2">
                         <span class="step-indicator">2</span>
@@ -713,6 +713,7 @@
 
                 <div class="tabs">
                     <button class="tab active" data-tab="expressions">📌 카테고리별 표현</button>
+                    <button class="tab" data-tab="sentences">📝 문장·숙어 정리</button>
                     <button class="tab" data-tab="verbs">📚 학술 동사</button>
                     <button class="tab" data-tab="transitions">🔗 연결어</button>
                 </div>
@@ -737,6 +738,8 @@
             openaiKey: '',
             file: null,
             extractedData: null,
+            pdfIndex: null,
+            extractionMethod: null,
             currentTab: 'expressions'
         };
 
@@ -803,7 +806,7 @@
         }
 
         function updateAnalyzeButton() {
-            const ready = state.upstageKey && state.openaiKey && state.file;
+            const ready = state.openaiKey && state.file;
             analyzeBtn.disabled = !ready;
         }
 
@@ -819,7 +822,10 @@
             try {
                 // Step 1: Extract text from PDF
                 setProgress(1, 'active');
-                const text = await extractTextFromPDF(state.file);
+                const extracted = await extractTextFromPDF(state.file);
+                const text = extracted.fullText;
+                state.pdfIndex = extracted.pdfIndex;
+                state.extractionMethod = extracted.method;
                 setProgress(1, 'done');
 
                 // Step 2: Extract expressions using GPT
@@ -829,7 +835,8 @@
 
                 // Step 3: Process results
                 setProgress(3, 'active');
-                state.extractedData = expressions;
+                // Attach citations + local expansions + sentence insights
+                state.extractedData = postProcessAnalysis(expressions, state.pdfIndex, text, state.extractionMethod);
                 renderResults();
                 setProgress(3, 'done');
 
@@ -863,8 +870,190 @@
             });
         }
 
-        // Extract text from PDF using Upstage API
+        // --- Local resources (expand verbs/transitions + academic phrases) ---
+        const LOCAL_ACADEMIC_VERBS = {
+            "acknowledge": "인정하다",
+            "address": "다루다/해결하다",
+            "analyze": "분석하다",
+            "argue": "주장하다",
+            "assess": "평가하다",
+            "attribute": "~에 기인하다",
+            "characterize": "특징짓다",
+            "clarify": "명확히 하다",
+            "compare": "비교하다",
+            "compute": "계산하다",
+            "conclude": "결론내리다",
+            "confirm": "확인하다",
+            "construct": "구성하다",
+            "contrast": "대조하다",
+            "contribute": "기여하다",
+            "demonstrate": "입증하다",
+            "derive": "도출하다",
+            "describe": "설명하다",
+            "determine": "규명하다",
+            "discuss": "논의하다",
+            "distinguish": "구별하다",
+            "elucidate": "명확히 밝히다",
+            "emphasize": "강조하다",
+            "establish": "정립하다",
+            "estimate": "추정하다",
+            "evaluate": "평가하다",
+            "examine": "검토하다",
+            "explore": "탐구하다",
+            "formulate": "정식화하다",
+            "highlight": "부각하다",
+            "identify": "식별하다",
+            "illustrate": "예시하다",
+            "imply": "함의하다",
+            "indicate": "시사하다",
+            "infer": "추론하다",
+            "investigate": "조사하다",
+            "justify": "정당화하다",
+            "maintain": "유지하다/주장하다",
+            "measure": "측정하다",
+            "motivate": "동기부여하다",
+            "observe": "관찰하다",
+            "outline": "개요를 제시하다",
+            "predict": "예측하다",
+            "propose": "제안하다",
+            "quantify": "정량화하다",
+            "reveal": "밝히다",
+            "report": "보고하다",
+            "suggest": "제안/시사하다",
+            "support": "뒷받침하다",
+            "test": "검증하다",
+            "theorize": "이론화하다",
+            "validate": "타당화하다",
+            "verify": "검증하다"
+        };
+
+        const LOCAL_TRANSITIONS = {
+            "however": "그러나/반면에(대조)",
+            "nevertheless": "그럼에도 불구하고(역접)",
+            "nonetheless": "그럼에도 불구하고(역접)",
+            "therefore": "그러므로(결과)",
+            "thus": "따라서(결과)",
+            "consequently": "결과적으로(결과)",
+            "moreover": "게다가(추가)",
+            "furthermore": "더욱이(추가)",
+            "in addition": "추가로(추가)",
+            "additionally": "추가로(추가)",
+            "for example": "예를 들어(예시)",
+            "for instance": "예컨대(예시)",
+            "in contrast": "대조적으로(대조)",
+            "by contrast": "대조적으로(대조)",
+            "on the other hand": "다른 한편으로(대조)",
+            "in particular": "특히(강조)",
+            "notably": "주목할 점은(강조)",
+            "in summary": "요약하면(요약)",
+            "overall": "전반적으로(요약)",
+            "in conclusion": "결론적으로(결론)",
+            "as a result": "그 결과(결과)",
+            "as such": "따라서/그런 이유로(결과)",
+            "meanwhile": "한편(전환)",
+            "in turn": "그 결과/차례로(연쇄)",
+            "in other words": "즉(재진술)",
+            "that is": "즉(재진술)",
+            "similarly": "유사하게(비교)",
+            "likewise": "마찬가지로(비교)",
+            "specifically": "구체적으로(구체화)",
+            "in fact": "사실(강조)",
+            "indeed": "실제로(강조)",
+            "alternatively": "대안적으로(대안)"
+        };
+
+        const LOCAL_ACADEMIC_PHRASES = [
+            { phrase: "it is worth noting that", usage: "주목할 점을 덧붙일 때" },
+            { phrase: "to the best of our knowledge", usage: "선행연구 대비 새로움을 주장할 때" },
+            { phrase: "in line with", usage: "기존 결과/이론과 일치함을 말할 때" },
+            { phrase: "with respect to", usage: "특정 관점/대상에 대해 말할 때" },
+            { phrase: "in the context of", usage: "어떤 맥락에서 논의할 때" },
+            { phrase: "as shown in", usage: "그림/표/결과를 참조할 때" },
+            { phrase: "taken together", usage: "여러 결과를 종합할 때" },
+            { phrase: "in terms of", usage: "~의 측면에서 비교/평가할 때" },
+            { phrase: "on the basis of", usage: "근거를 제시할 때" },
+            { phrase: "in accordance with", usage: "규칙/절차/기준에 따라" },
+            { phrase: "as opposed to", usage: "~와 대비하여" },
+            { phrase: "in contrast to", usage: "~와 대조하여" },
+            { phrase: "consistent with", usage: "~와 일관됨을 말할 때" },
+            { phrase: "contrary to", usage: "~와 반대로" },
+            { phrase: "to this end", usage: "이 목적을 위해" },
+            { phrase: "in order to", usage: "목적을 표현할 때" },
+            { phrase: "as a means of", usage: "수단을 표현할 때" },
+            { phrase: "in light of", usage: "~을 고려할 때" },
+            { phrase: "with the aim of", usage: "목표를 표현할 때" },
+            { phrase: "from the perspective of", usage: "관점 전환" }
+        ];
+
+        // Extract text from PDF using PDF.js (preferred for page/line citations). Fallback to Upstage OCR when needed.
         async function extractTextFromPDF(file) {
+            const arrayBuffer = await file.arrayBuffer();
+
+            // 1) Try PDF.js text layer extraction first
+            try {
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                const pages = [];
+                let fullText = '';
+
+                for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+                    const page = await pdf.getPage(pageNumber);
+                    const textContent = await page.getTextContent();
+
+                    const items = (textContent.items || [])
+                        .map((it) => {
+                            const str = (it.str || '').replace(/\s+/g, ' ').trim();
+                            if (!str) return null;
+                            const transform = it.transform || [];
+                            const x = Number(transform[4] ?? 0);
+                            const y = Number(transform[5] ?? 0);
+                            return { str, x, y };
+                        })
+                        .filter(Boolean);
+
+                    items.sort((a, b) => (b.y - a.y) || (a.x - b.x));
+
+                    const lines = [];
+                    let current = null;
+                    const yThreshold = 2.6;
+                    for (const it of items) {
+                        if (!current) {
+                            current = { y: it.y, parts: [it] };
+                            continue;
+                        }
+                        if (Math.abs(it.y - current.y) <= yThreshold) {
+                            current.parts.push(it);
+                        } else {
+                            current.parts.sort((p1, p2) => p1.x - p2.x);
+                            const lineText = current.parts.map(p => p.str).join(' ').replace(/\s+/g, ' ').trim();
+                            if (lineText) lines.push(lineText);
+                            current = { y: it.y, parts: [it] };
+                        }
+                    }
+                    if (current) {
+                        current.parts.sort((p1, p2) => p1.x - p2.x);
+                        const lineText = current.parts.map(p => p.str).join(' ').replace(/\s+/g, ' ').trim();
+                        if (lineText) lines.push(lineText);
+                    }
+
+                    const pageText = lines.join('\n');
+                    pages.push({ pageNumber, lines });
+                    fullText += `\n\n[Page ${pageNumber}]\n` + pageText;
+                }
+
+                const cleaned = fullText.replace(/\n{3,}/g, '\n\n').trim();
+                if (cleaned.length >= 200) {
+                    return { fullText: cleaned, pdfIndex: pages, method: 'pdfjs' };
+                }
+            } catch (e) {
+                // fall through to OCR if configured
+                console.warn('PDF.js extraction failed; may fallback to OCR:', e);
+            }
+
+            // 2) Fallback: Upstage OCR (no reliable page/line citations)
+            if (!state.upstageKey) {
+                throw new Error('PDF 텍스트를 추출하지 못했습니다. (스캔 PDF라면 Upstage API Key를 입력해 OCR을 사용하세요)');
+            }
+
             const formData = new FormData();
             formData.append('document', file);
             formData.append('model', 'ocr');
@@ -883,7 +1072,232 @@
             }
 
             const data = await response.json();
-            return data.text || '';
+            const text = (data.text || '').trim();
+            return { fullText: text, pdfIndex: null, method: 'upstage-ocr' };
+        }
+
+        function normalizeForSearch(s) {
+            return (s || '')
+                .toLowerCase()
+                .replace(/\u00ad/g, '') // soft hyphen
+                .replace(/\s+/g, ' ')
+                .replace(/[“”„‟]/g, '"')
+                .replace(/[’‘‛]/g, "'")
+                .replace(/[^a-z0-9\s'"\-]/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        function buildPageSearchIndex(pdfIndex) {
+            if (!pdfIndex?.length) return null;
+            return pdfIndex.map(p => {
+                const normalizedLines = p.lines.map(l => normalizeForSearch(l));
+                const joined = normalizedLines.join(' ');
+                const lineStarts = [];
+                let offset = 0;
+                for (let i = 0; i < normalizedLines.length; i++) {
+                    lineStarts.push(offset);
+                    offset += normalizedLines[i].length + 1;
+                }
+                return {
+                    pageNumber: p.pageNumber,
+                    normalizedLines,
+                    joined,
+                    lineStarts
+                };
+            });
+        }
+
+        function findCitationForSnippet(snippet, pageIndex) {
+            if (!snippet || !pageIndex?.length) return null;
+            const needle = normalizeForSearch(snippet);
+            if (!needle || needle.length < 20) return null;
+
+            // Try exact substring on joined per page
+            let best = null;
+            for (const page of pageIndex) {
+                const pos = page.joined.indexOf(needle);
+                if (pos !== -1) {
+                    const lineStart = locateLineByOffset(page.lineStarts, pos) + 1;
+                    const lineEnd = locateLineByOffset(page.lineStarts, pos + needle.length) + 1;
+                    return { page: page.pageNumber, lineStart, lineEnd, confidence: 1.0 };
+                }
+
+                // Fallback: partial match using first ~60 chars
+                const shortNeedle = needle.slice(0, Math.min(60, needle.length));
+                const pos2 = shortNeedle.length >= 25 ? page.joined.indexOf(shortNeedle) : -1;
+                if (pos2 !== -1) {
+                    const lineStart = locateLineByOffset(page.lineStarts, pos2) + 1;
+                    const lineEnd = locateLineByOffset(page.lineStarts, pos2 + shortNeedle.length) + 1;
+                    const candidate = { page: page.pageNumber, lineStart, lineEnd, confidence: 0.6 };
+                    best = betterCitation(best, candidate);
+                }
+            }
+            return best;
+        }
+
+        function locateLineByOffset(lineStarts, offset) {
+            if (!lineStarts?.length) return 0;
+            let lo = 0;
+            let hi = lineStarts.length - 1;
+            while (lo <= hi) {
+                const mid = Math.floor((lo + hi) / 2);
+                if (lineStarts[mid] <= offset) lo = mid + 1;
+                else hi = mid - 1;
+            }
+            return Math.max(0, Math.min(lineStarts.length - 1, hi));
+        }
+
+        function betterCitation(a, b) {
+            if (!b) return a;
+            if (!a) return b;
+            if (b.confidence !== a.confidence) return b.confidence > a.confidence ? b : a;
+            // Prefer earlier pages/lines
+            if (b.page !== a.page) return b.page < a.page ? b : a;
+            if (b.lineStart !== a.lineStart) return b.lineStart < a.lineStart ? b : a;
+            return a;
+        }
+
+        function extractSentences(text) {
+            const raw = (text || '').replace(/\[Page\s+\d+\]/g, ' ').replace(/\s+/g, ' ').trim();
+            if (!raw) return [];
+
+            // Prefer Intl.Segmenter when available
+            if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+                const seg = new Intl.Segmenter('en', { granularity: 'sentence' });
+                const out = [];
+                for (const part of seg.segment(raw)) {
+                    const s = String(part.segment).replace(/\s+/g, ' ').trim();
+                    if (s.length >= 25) out.push(s);
+                }
+                return out;
+            }
+
+            // Fallback: simple regex split
+            return raw
+                .split(/(?<=[.!?])\s+(?=[A-Z])/)
+                .map(s => s.trim())
+                .filter(s => s.length >= 25);
+        }
+
+        function findPhrasesInSentence(sentence) {
+            const norm = normalizeForSearch(sentence);
+            const hits = [];
+            for (const item of LOCAL_ACADEMIC_PHRASES) {
+                const p = normalizeForSearch(item.phrase);
+                if (p && norm.includes(p)) {
+                    hits.push({ phrase: item.phrase, usage: item.usage });
+                }
+            }
+            return hits;
+        }
+
+        function extractLocalVerbsAndTransitionsFromSentences(sentences) {
+            const verbCounts = new Map();
+            const verbExample = new Map();
+            const transitionCounts = new Map();
+            const transitionExample = new Map();
+
+            const verbSet = new Set(Object.keys(LOCAL_ACADEMIC_VERBS));
+            const transitionKeys = Object.keys(LOCAL_TRANSITIONS);
+
+            for (const s of sentences) {
+                const norm = normalizeForSearch(s);
+                const tokens = norm.split(' ').filter(Boolean);
+
+                for (const t of tokens) {
+                    if (verbSet.has(t)) {
+                        verbCounts.set(t, (verbCounts.get(t) || 0) + 1);
+                        if (!verbExample.has(t)) verbExample.set(t, s);
+                    }
+                }
+
+                for (const key of transitionKeys) {
+                    const k = normalizeForSearch(key);
+                    if (k && norm.includes(k)) {
+                        transitionCounts.set(key, (transitionCounts.get(key) || 0) + 1);
+                        if (!transitionExample.has(key)) transitionExample.set(key, s);
+                    }
+                }
+            }
+
+            const verbs = [...verbCounts.entries()]
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 40)
+                .map(([verb, count]) => ({
+                    verb,
+                    meaning: LOCAL_ACADEMIC_VERBS[verb] || '',
+                    example: verbExample.get(verb) || '',
+                    count
+                }));
+
+            const transitions = [...transitionCounts.entries()]
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 40)
+                .map(([word, count]) => ({
+                    word,
+                    usage: LOCAL_TRANSITIONS[word] || '',
+                    example: transitionExample.get(word) || '',
+                    count
+                }));
+
+            return { verbs, transitions };
+        }
+
+        function mergeDeduped(primary, extra, keyFn) {
+            const out = [];
+            const seen = new Set();
+            for (const item of (primary || [])) {
+                const k = keyFn(item);
+                if (!k || seen.has(k)) continue;
+                seen.add(k);
+                out.push(item);
+            }
+            for (const item of (extra || [])) {
+                const k = keyFn(item);
+                if (!k || seen.has(k)) continue;
+                seen.add(k);
+                out.push(item);
+            }
+            return out;
+        }
+
+        function postProcessAnalysis(data, pdfIndex, fullText, method) {
+            const out = JSON.parse(JSON.stringify(data || {}));
+            const pageIndex = buildPageSearchIndex(pdfIndex);
+
+            // 1) citations for expressions (based on example sentence)
+            if (out.sections?.length) {
+                out.sections.forEach(section => {
+                    (section.expressions || []).forEach(expr => {
+                        const citation = findCitationForSnippet(expr.example || expr.expression, pageIndex);
+                        if (citation) expr.citation = citation;
+                    });
+                });
+            }
+
+            // 2) sentence insights
+            const sentences = extractSentences(fullText).slice(0, 250);
+            const sentenceInsights = sentences.map(s => {
+                const citation = findCitationForSnippet(s, pageIndex);
+                const phrases = findPhrasesInSentence(s);
+                return { sentence: s, citation, phrases };
+            });
+            out.sentence_insights = {
+                method,
+                note: method === 'upstage-ocr'
+                    ? 'OCR 추출은 페이지/줄 인용이 정확하지 않을 수 있어요. (PDF.js로 추출 가능한 PDF면 인용 정확도가 크게 좋아집니다)'
+                    : '문장별로 페이지/줄을 자동 추정했습니다. PDF 레이아웃에 따라 줄 번호는 약간 어긋날 수 있습니다.',
+                items: sentenceInsights
+            };
+
+            // 3) expand verbs/transitions locally (more coverage)
+            const local = extractLocalVerbsAndTransitionsFromSentences(sentences);
+            out.academic_verbs = mergeDeduped(out.academic_verbs, local.verbs, v => (v.verb || '').toLowerCase());
+            out.transition_words = mergeDeduped(out.transition_words, local.transitions, t => (t.word || '').toLowerCase());
+            out._local_counts = { academic_verbs: local.verbs, transition_words: local.transitions };
+
+            return out;
         }
 
         // Extract expressions using OpenAI GPT
@@ -1023,12 +1437,48 @@ ${truncatedText}
                                         <dd>${expr.usage}</dd>
                                         <dt>예문</dt>
                                         <dd><em>${expr.example}</em></dd>
+                                        <dt>인용</dt>
+                                        <dd>${expr.citation ? `p. ${expr.citation.page}, line ${expr.citation.lineStart}${expr.citation.lineEnd && expr.citation.lineEnd !== expr.citation.lineStart ? `–${expr.citation.lineEnd}` : ''}` : '<em>자동 인용을 찾지 못했습니다</em>'}</dd>
                                     </dl>
                                 </div>
                             `).join('')}
                         </div>
                     `;
                 });
+            } else if (tab === 'sentences') {
+                const items = data.sentence_insights?.items || [];
+                const note = data.sentence_insights?.note || '';
+                html = `
+                    <div style="margin-bottom: 1rem; color: var(--muted); font-size: 0.9rem;">
+                        ${note}
+                    </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 18%">인용</th>
+                                <th>문장</th>
+                                <th style="width: 30%">추천 숙어/표현</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${items.map(it => {
+                                const cite = it.citation
+                                    ? `p. ${it.citation.page}, line ${it.citation.lineStart}${it.citation.lineEnd && it.citation.lineEnd !== it.citation.lineStart ? `–${it.citation.lineEnd}` : ''}`
+                                    : '-';
+                                const phrases = (it.phrases || []).length
+                                    ? (it.phrases || []).map(p => `<div><strong>${p.phrase}</strong><br><span style="color: var(--muted);">${p.usage}</span></div>`).join('<hr style="border:0;border-top:1px solid var(--border);margin:0.5rem 0;">')
+                                    : '<span style="color: var(--muted);">(감지된 숙어 없음)</span>';
+                                return `
+                                    <tr>
+                                        <td>${cite}</td>
+                                        <td>${escapeHtml(it.sentence)}</td>
+                                        <td>${phrases}</td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                `;
             } else if (tab === 'verbs') {
                 html = `
                     <table class="data-table">
@@ -1094,7 +1544,8 @@ ${truncatedText}
             data.sections.forEach(section => {
                 section.expressions.forEach(expr => {
                     const front = `${expr.expression}\n\n💡 ${expr.usage}`;
-                    const back = `📝 예문:\n${expr.example}\n\n📂 카테고리: ${section.category}`;
+                    const cite = expr.citation ? `\n\n📍 인용: p. ${expr.citation.page}, line ${expr.citation.lineStart}${expr.citation.lineEnd && expr.citation.lineEnd !== expr.citation.lineStart ? `–${expr.citation.lineEnd}` : ''}` : '';
+                    const back = `📝 예문:\n${expr.example}\n\n📂 카테고리: ${section.category}${cite}`;
                     rows.push(`${front}\t${back}`);
                 });
             });
@@ -1132,6 +1583,9 @@ ${truncatedText}
                     md += `### ${emoji} \`${expr.expression}\`\n`;
                     md += `- **사용 상황**: ${expr.usage}\n`;
                     md += `- **예문**: _${expr.example}_\n\n`;
+                    if (expr.citation) {
+                        md += `- **인용**: p. ${expr.citation.page}, line ${expr.citation.lineStart}${expr.citation.lineEnd && expr.citation.lineEnd !== expr.citation.lineStart ? `–${expr.citation.lineEnd}` : ''}\n\n`;
+                    }
                 });
             });
 
@@ -1156,6 +1610,15 @@ ${truncatedText}
 
             downloadFile(md, 'academic_expressions.md', 'text/markdown');
         });
+
+        function escapeHtml(s) {
+            return String(s || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
 
         function downloadFile(content, filename, mimeType) {
             const blob = new Blob([content], { type: mimeType });
