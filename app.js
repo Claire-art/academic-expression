@@ -12,6 +12,102 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 // ----------------------------
+// Model response parsing helpers
+// ----------------------------
+function stripCodeFences(raw) {
+  let s = String(raw || '').trim();
+  if (!s) return '';
+  if (s.includes('```json')) {
+    s = s.split('```json')[1].split('```')[0].trim();
+  } else if (s.includes('```')) {
+    s = s.split('```')[1].split('```')[0].trim();
+  }
+  return s;
+}
+
+function extractBalancedJsonObject(raw) {
+  const s = String(raw || '');
+  const start = s.indexOf('{');
+  if (start === -1) return '';
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === '{') depth += 1;
+    if (ch === '}') depth -= 1;
+
+    if (depth === 0) {
+      return s.slice(start, i + 1).trim();
+    }
+  }
+
+  return '';
+}
+
+function cleanupJsonLikeString(raw) {
+  // Remove common JSON-ish issues without trying to be too clever.
+  let s = String(raw || '').trim();
+  if (!s) return '';
+  // Remove trailing commas before } or ]
+  s = s.replace(/,\s*([}\]])/g, '$1');
+  return s;
+}
+
+function parseJsonRobust(raw) {
+  const original = String(raw || '').trim();
+  if (!original) throw new Error('모델이 빈 응답을 반환했습니다.');
+
+  // 1) Direct parse
+  try {
+    return JSON.parse(original);
+  } catch {
+    // continue
+  }
+
+  // 2) Strip code fences
+  const noFences = stripCodeFences(original);
+  if (noFences && noFences !== original) {
+    try {
+      return JSON.parse(cleanupJsonLikeString(noFences));
+    } catch {
+      // continue
+    }
+  }
+
+  // 3) Extract balanced JSON object from within extra text
+  const balanced = extractBalancedJsonObject(noFences || original);
+  if (balanced) {
+    try {
+      return JSON.parse(cleanupJsonLikeString(balanced));
+    } catch {
+      // continue
+    }
+  }
+
+  const preview = (original.length > 400) ? `${original.slice(0, 400)}…` : original;
+  throw new Error(`응답 파싱 오류. 다시 시도해주세요. (미리보기: ${preview})`);
+}
+
+// ----------------------------
 // State
 // ----------------------------
 let state = {
@@ -327,22 +423,6 @@ ${truncatedText}
 - 표현/팁은 과장하지 말고, 논문 문체(톤/완곡함/범위 제한)에 맞게 안내하세요
 - JSON 형식만 출력하고 다른 텍스트는 포함하지 마세요`;
 
-  function extractJsonString(raw) {
-    let s = String(raw || '').trim();
-    if (!s) return '';
-    if (s.includes('```json')) {
-      s = s.split('```json')[1].split('```')[0].trim();
-    } else if (s.includes('```')) {
-      s = s.split('```')[1].split('```')[0].trim();
-    }
-    const firstBrace = s.indexOf('{');
-    const lastBrace = s.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-      s = s.slice(firstBrace, lastBrace + 1).trim();
-    }
-    return s;
-  }
-
   const body = {
     model: 'gpt-4o-mini',
     messages: [{ role: 'user', content: prompt }],
@@ -395,10 +475,10 @@ ${truncatedText}
   }
 
   try {
-    return JSON.parse(extractJsonString(content));
+    return parseJsonRobust(content);
   } catch (e) {
-    console.error('JSON parse error:', e, content);
-    throw new Error('응답 파싱 오류. 다시 시도해주세요.');
+    console.error('JSON parse error:', e);
+    throw e;
   }
 }
 
@@ -1296,15 +1376,5 @@ ${draft}
     throw new Error(`OpenAI 모델 응답이 비어있습니다. (id=${id}, finish_reason=${finish})`);
   }
 
-  try {
-    return JSON.parse(content);
-  } catch {
-    const s = String(content);
-    const first = s.indexOf('{');
-    const last = s.lastIndexOf('}');
-    if (first !== -1 && last !== -1 && last > first) {
-      return JSON.parse(s.slice(first, last + 1));
-    }
-    throw new Error('피드백 응답 파싱 오류. 다시 시도해주세요.');
-  }
+  return parseJsonRobust(content);
 }
