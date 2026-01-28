@@ -325,6 +325,78 @@ ${truncatedText}
     return response;
   }
 
+  async function callUpstageStream(prompt, maxTokens, { forceJson } = { forceJson: false }) {
+    const body = {
+      model: 'solar-pro3',
+      messages: [
+        { role: 'system', content: SYSTEM_JSON_ONLY },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.1,
+      max_tokens: maxTokens,
+      stream: true
+    };
+    if (forceJson) {
+      body.response_format = { type: 'json_object' };
+    }
+
+    const response = await fetch('https://api.upstage.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+        'Authorization': `Bearer ${state.upstageKey}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`Upstage LLM 오류(stream): ${err}`);
+    }
+
+    // OpenAI-compatible streaming uses SSE: lines starting with "data: {json}".
+    const reader = response.body?.getReader?.();
+    if (!reader) throw new Error('브라우저가 스트리밍 응답을 처리할 수 없습니다.');
+
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let out = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Process complete lines.
+      let idx;
+      while ((idx = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, idx).trimEnd();
+        buffer = buffer.slice(idx + 1);
+
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (!trimmed.startsWith('data:')) continue;
+
+        const payload = trimmed.slice('data:'.length).trim();
+        if (payload === '[DONE]') {
+          return out.trim();
+        }
+
+        try {
+          const json = JSON.parse(payload);
+          const delta = json?.choices?.[0]?.delta;
+          const chunkText = delta?.content ?? delta?.text ?? '';
+          if (chunkText) out += chunkText;
+        } catch {
+          // Ignore malformed chunk; keep reading.
+        }
+      }
+    }
+
+    return out.trim();
+  }
+
   // First try: richer output but still bounded.
   const prompt = buildPrompt({ maxPerCategory: 2, maxExampleChars: 180 });
 
@@ -350,6 +422,10 @@ ${truncatedText}
   const choice0 = data?.choices?.[0];
   const message0 = choice0?.message;
   let content = message0?.content ?? choice0?.text;
+  // Upstage may place text into message.reasoning while leaving content empty.
+  if ((!content || (typeof content === 'string' && !content.trim())) && message0?.reasoning) {
+    content = message0.reasoning;
+  }
 
   // Some OpenAI-compatible APIs may return structured/array content.
   if (Array.isArray(content)) {
@@ -401,6 +477,15 @@ ${truncatedText}
     }
     if (typeof retryContent === 'string') retryContent = retryContent.trim();
     content = retryContent;
+
+    // If still empty (or reasoning-only), fall back to streaming to capture delta.content.
+    if (!content) {
+      try {
+        content = await callUpstageStream(retryPrompt, 650, { forceJson: false });
+      } catch (e) {
+        console.warn('Streaming fallback failed:', e);
+      }
+    }
   }
 
   if (!content) {
