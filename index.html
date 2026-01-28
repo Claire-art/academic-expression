@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Academic Expression Learner</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    
+    <style>
+        :root {
+            --ink: #1a1a1a;
+            --paper: #faf9f7;
+            --accent: #c45a3b;
+            --accent-light: #e8d5cf;
+            --muted: #6b6b6b;
+            --border: #e0ddd8;
+            --success: #2d6a4f;
+            --warning: #b86e00;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            background: var(--paper);
+            color: var(--ink);
+            min-height: 100vh;
+            line-height: 1.7;
+        }
+
+        /* Header */
+        header {
+            border-bottom: 1px solid var(--border);
+            padding: 2rem 0;
+            background: linear-gradient(180deg, #fff 0%, var(--paper) 100%);
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: var(--ink);
+            letter-spacing: -0.02em;
+        }
+
+        .logo span {
+            color: var(--accent);
+        }
+
+        .tagline {
+            font-size: 0.85rem;
+            color: var(--muted);
+            font-weight: 300;
+        }
+
+        /* Main Layout */
+        main {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 3rem 2rem;
+            display: grid;
+            grid-template-columns: 380px 1fr;
+            gap: 3rem;
+            min-height: calc(100vh - 200px);
+        }
+
+        @media (max-width: 900px) {
+            main {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Sidebar */
+        .sidebar {
+            position: sticky;
+            top: 2rem;
+            height: fit-content;
+        }
+
+        .card {
+            background: #fff;
+            border: 1px solid var(--border);
+            padding: 2rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card-title {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 2px solid var(--accent);
+            display: inline-block;
+        }
+
+        /* API Key Input */
+        .api-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .api-section:last-child {
+            margin-bottom: 0;
+        }
+
+        label {
+            display: block;
+            font-size: 0.8rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--muted);
+            margin-bottom: 0.5rem;
+        }
+
+        input[type="password"],
+        input[type="text"] {
+            width: 100%;
+            padding: 0.875rem 1rem;
+            border: 1px solid var(--border);
+            background: var(--paper);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--accent);
+            background: #fff;
+        }
+
+        .api-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--border);
+        }
+
+        .status-dot.active {
+            background: var(--success);
+        }
+
+        /* File Upload */
+        .upload-zone {
+            border: 2px dashed var(--border);
+            padding: 2.5rem 1.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: var(--paper);
+        }
+
+        .upload-zone:hover {
+            border-color: var(--accent);
+            background: var(--accent-light);
+        }
+
+        .upload-zone.dragover {
+            border-color: var(--accent);
+            background: var(--accent-light);
+            transform: scale(1.01);
+        }
+
+        .upload-zone.has-file {
+            border-style: solid;
+            border-color: var(--success);
+            background: #f0f7f4;
+        }
+
+        .upload-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            opacity: 0.6;
+        }
+
+        .upload-text {
+            font-size: 0.9rem;
+            color: var(--muted);
+        }
+
+        .upload-text strong {
+            color: var(--ink);
+            display: block;
+            margin-bottom: 0.25rem;
+        }
+
+        .file-info {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--success);
+            margin-top: 0.5rem;
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        /* Analyze Button */
+        .analyze-btn {
+            width: 100%;
+            padding: 1.125rem 2rem;
+            background: var(--ink);
+            color: #fff;
+            border: none;
+            font-family: 'Noto Sans KR', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            letter-spacing: 0.02em;
+        }
+
+        .analyze-btn:hover:not(:disabled) {
+            background: var(--accent);
+            transform: translateY(-1px);
+        }
+
+        .analyze-btn:disabled {
+            background: var(--border);
+            cursor: not-allowed;
+        }
+
+        .analyze-btn.loading {
+            position: relative;
+            color: transparent;
+        }
+
+        .analyze-btn.loading::after {
+            content: "";
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            top: 50%;
+            left: 50%;
+            margin-left: -10px;
+            margin-top: -10px;
+            border: 2px solid #fff;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Results Section */
+        .results-section {
+            min-height: 400px;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .results-title {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .export-buttons {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .export-btn {
+            padding: 0.625rem 1.25rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            font-family: 'Noto Sans KR', sans-serif;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .export-btn:hover {
+            border-color: var(--ink);
+            background: var(--ink);
+            color: #fff;
+        }
+
+        /* Empty State */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 400px;
+            text-align: center;
+            color: var(--muted);
+        }
+
+        .empty-state-icon {
+            font-size: 4rem;
+            margin-bottom: 1.5rem;
+            opacity: 0.3;
+        }
+
+        .empty-state h3 {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 1.5rem;
+            font-weight: 400;
+            color: var(--ink);
+            margin-bottom: 0.5rem;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 2rem;
+        }
+
+        .tab {
+            padding: 1rem 1.5rem;
+            background: none;
+            border: none;
+            font-family: 'Noto Sans KR', sans-serif;
+            font-size: 0.9rem;
+            color: var(--muted);
+            cursor: pointer;
+            position: relative;
+            transition: color 0.2s ease;
+        }
+
+        .tab:hover {
+            color: var(--ink);
+        }
+
+        .tab.active {
+            color: var(--ink);
+            font-weight: 500;
+        }
+
+        .tab.active::after {
+            content: "";
+            position: absolute;
+            bottom: -1px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--accent);
+        }
+
+        /* Category Section */
+        .category {
+            margin-bottom: 3rem;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .category-header {
+            display: flex;
+            align-items: baseline;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .category-name {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 1.4rem;
+            font-weight: 600;
+        }
+
+        .category-name-en {
+            font-size: 0.85rem;
+            color: var(--muted);
+            font-style: italic;
+        }
+
+        /* Expression Card */
+        .expression {
+            background: #fff;
+            border-left: 3px solid var(--border);
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            transition: all 0.2s ease;
+        }
+
+        .expression:hover {
+            border-left-color: var(--accent);
+            box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+        }
+
+        .expression-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .difficulty {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.65rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+
+        .difficulty.basic {
+            background: #e8f5e9;
+            color: #2d6a4f;
+        }
+
+        .difficulty.intermediate {
+            background: #fff3e0;
+            color: #b86e00;
+        }
+
+        .difficulty.advanced {
+            background: #fce4ec;
+            color: #c45a3b;
+        }
+
+        .expression-text {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 1.2rem;
+            font-weight: 600;
+            line-height: 1.4;
+            color: var(--ink);
+        }
+
+        .expression-meta {
+            font-size: 0.875rem;
+        }
+
+        .expression-meta dt {
+            font-weight: 500;
+            color: var(--muted);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            margin-bottom: 0.25rem;
+            margin-top: 0.75rem;
+        }
+
+        .expression-meta dd {
+            color: var(--ink);
+        }
+
+        .expression-meta dd em {
+            font-style: italic;
+            color: var(--muted);
+        }
+
+        /* Verbs & Transitions Table */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        .data-table th {
+            text-align: left;
+            padding: 1rem;
+            background: var(--paper);
+            font-weight: 500;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--muted);
+            border-bottom: 2px solid var(--border);
+        }
+
+        .data-table td {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        .data-table tr:hover td {
+            background: #fff;
+        }
+
+        .verb-name {
+            font-family: 'Cormorant Garamond', serif;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        /* Progress Indicator */
+        .progress-container {
+            margin-top: 1.5rem;
+            display: none;
+        }
+
+        .progress-container.show {
+            display: block;
+        }
+
+        .progress-step {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 0;
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+
+        .progress-step.active {
+            color: var(--ink);
+        }
+
+        .progress-step.done {
+            color: var(--success);
+        }
+
+        .step-indicator {
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .progress-step.active .step-indicator {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .progress-step.done .step-indicator {
+            border-color: var(--success);
+            background: var(--success);
+            color: #fff;
+        }
+
+        /* Error State */
+        .error-message {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+            padding: 1rem 1.5rem;
+            margin-top: 1rem;
+            font-size: 0.875rem;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 2rem;
+            color: var(--muted);
+            font-size: 0.8rem;
+            border-top: 1px solid var(--border);
+            margin-top: 4rem;
+        }
+
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .header-content {
+                flex-direction: column;
+                gap: 0.5rem;
+                text-align: center;
+            }
+
+            main {
+                padding: 1.5rem 1rem;
+            }
+
+            .card {
+                padding: 1.5rem;
+            }
+
+            .results-header {
+                flex-direction: column;
+                gap: 1rem;
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div>
+                <h1 class="logo">Academic<span>.</span>Expression</h1>
+                <p class="tagline">좋은 논문에서 학술 글쓰기 표현을 배워보세요</p>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <aside class="sidebar">
+            <!-- API Keys -->
+            <div class="card">
+                <h2 class="card-title">API 설정</h2>
+                
+                <div class="api-section">
+                    <label for="upstage-key">Upstage API Key</label>
+                    <input type="password" id="upstage-key" placeholder="up_xxxxxxxx">
+                    <div class="api-status">
+                        <span class="status-dot" id="upstage-status"></span>
+                        <span>문서 파싱에 사용됩니다</span>
+                    </div>
+                </div>
+
+                <div class="api-section">
+                    <label for="openai-key">OpenAI API Key</label>
+                    <input type="password" id="openai-key" placeholder="sk-xxxxxxxx">
+                    <div class="api-status">
+                        <span class="status-dot" id="openai-status"></span>
+                        <span>표현 추출에 사용됩니다</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- File Upload -->
+            <div class="card">
+                <h2 class="card-title">논문 업로드</h2>
+                
+                <div class="upload-zone" id="upload-zone">
+                    <div class="upload-icon">📄</div>
+                    <div class="upload-text">
+                        <strong>PDF 파일을 드래그하거나 클릭하세요</strong>
+                        영어 논문 PDF 권장
+                    </div>
+                    <div class="file-info" id="file-info"></div>
+                </div>
+                <input type="file" id="file-input" accept=".pdf">
+
+                <button class="analyze-btn" id="analyze-btn" disabled>
+                    분석 시작
+                </button>
+
+                <div class="progress-container" id="progress-container">
+                    <div class="progress-step" id="step-1">
+                        <span class="step-indicator">1</span>
+                        <span>PDF 텍스트 추출 중...</span>
+                    </div>
+                    <div class="progress-step" id="step-2">
+                        <span class="step-indicator">2</span>
+                        <span>학술 표현 분석 중...</span>
+                    </div>
+                    <div class="progress-step" id="step-3">
+                        <span class="step-indicator">3</span>
+                        <span>결과 정리 중...</span>
+                    </div>
+                </div>
+
+                <div class="error-message" id="error-message" style="display: none;"></div>
+            </div>
+        </aside>
+
+        <section class="results-section">
+            <!-- Empty State -->
+            <div class="empty-state" id="empty-state">
+                <div class="empty-state-icon">📚</div>
+                <h3>분석할 논문을 업로드하세요</h3>
+                <p>PDF를 업로드하면 학술 표현을 추출해드립니다</p>
+            </div>
+
+            <!-- Results -->
+            <div id="results-container" style="display: none;">
+                <div class="results-header">
+                    <h2 class="results-title">추출된 표현</h2>
+                    <div class="export-buttons">
+                        <button class="export-btn" id="export-anki">Anki 내보내기</button>
+                        <button class="export-btn" id="export-md">마크다운 내보내기</button>
+                    </div>
+                </div>
+
+                <div class="tabs">
+                    <button class="tab active" data-tab="expressions">📌 카테고리별 표현</button>
+                    <button class="tab" data-tab="verbs">📚 학술 동사</button>
+                    <button class="tab" data-tab="transitions">🔗 연결어</button>
+                </div>
+
+                <div id="tab-content"></div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>Made for researchers who want to write better papers.</p>
+        <p>Powered by <a href="https://www.upstage.ai/" target="_blank">Upstage</a> & <a href="https://openai.com/" target="_blank">OpenAI</a></p>
+    </footer>
+
+    <script>
+        // PDF.js 워커 설정
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        // State
+        let state = {
+            upstageKey: '',
+            openaiKey: '',
+            file: null,
+            extractedData: null,
+            currentTab: 'expressions'
+        };
+
+        // DOM Elements
+        const upstageKeyInput = document.getElementById('upstage-key');
+        const openaiKeyInput = document.getElementById('openai-key');
+        const upstageStatus = document.getElementById('upstage-status');
+        const openaiStatus = document.getElementById('openai-status');
+        const uploadZone = document.getElementById('upload-zone');
+        const fileInput = document.getElementById('file-input');
+        const fileInfo = document.getElementById('file-info');
+        const analyzeBtn = document.getElementById('analyze-btn');
+        const progressContainer = document.getElementById('progress-container');
+        const errorMessage = document.getElementById('error-message');
+        const emptyState = document.getElementById('empty-state');
+        const resultsContainer = document.getElementById('results-container');
+        const tabContent = document.getElementById('tab-content');
+
+        // API Key Handlers
+        upstageKeyInput.addEventListener('input', (e) => {
+            state.upstageKey = e.target.value;
+            upstageStatus.classList.toggle('active', e.target.value.length > 0);
+            updateAnalyzeButton();
+        });
+
+        openaiKeyInput.addEventListener('input', (e) => {
+            state.openaiKey = e.target.value;
+            openaiStatus.classList.toggle('active', e.target.value.length > 0);
+            updateAnalyzeButton();
+        });
+
+        // File Upload Handlers
+        uploadZone.addEventListener('click', () => fileInput.click());
+        
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0 && files[0].type === 'application/pdf') {
+                handleFile(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            state.file = file;
+            uploadZone.classList.add('has-file');
+            fileInfo.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+            updateAnalyzeButton();
+        }
+
+        function updateAnalyzeButton() {
+            const ready = state.upstageKey && state.openaiKey && state.file;
+            analyzeBtn.disabled = !ready;
+        }
+
+        // Analyze Button Handler
+        analyzeBtn.addEventListener('click', async () => {
+            if (analyzeBtn.classList.contains('loading')) return;
+            
+            analyzeBtn.classList.add('loading');
+            analyzeBtn.disabled = true;
+            progressContainer.classList.add('show');
+            errorMessage.style.display = 'none';
+
+            try {
+                // Step 1: Extract text from PDF
+                setProgress(1, 'active');
+                const text = await extractTextFromPDF(state.file);
+                setProgress(1, 'done');
+
+                // Step 2: Extract expressions using GPT
+                setProgress(2, 'active');
+                const expressions = await extractExpressions(text);
+                setProgress(2, 'done');
+
+                // Step 3: Process results
+                setProgress(3, 'active');
+                state.extractedData = expressions;
+                renderResults();
+                setProgress(3, 'done');
+
+                // Show results
+                emptyState.style.display = 'none';
+                resultsContainer.style.display = 'block';
+
+            } catch (error) {
+                console.error('Error:', error);
+                errorMessage.textContent = `오류: ${error.message}`;
+                errorMessage.style.display = 'block';
+            } finally {
+                analyzeBtn.classList.remove('loading');
+                analyzeBtn.disabled = false;
+                setTimeout(() => {
+                    progressContainer.classList.remove('show');
+                    resetProgress();
+                }, 1000);
+            }
+        });
+
+        function setProgress(step, status) {
+            const stepEl = document.getElementById(`step-${step}`);
+            stepEl.classList.remove('active', 'done');
+            stepEl.classList.add(status);
+        }
+
+        function resetProgress() {
+            [1, 2, 3].forEach(i => {
+                document.getElementById(`step-${i}`).classList.remove('active', 'done');
+            });
+        }
+
+        // Extract text from PDF using Upstage API
+        async function extractTextFromPDF(file) {
+            const formData = new FormData();
+            formData.append('document', file);
+            formData.append('model', 'ocr');
+
+            const response = await fetch('https://api.upstage.ai/v1/document-digitization', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${state.upstageKey}`
+                },
+                body: formData
+            });
+
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(`Upstage API 오류: ${error}`);
+            }
+
+            const data = await response.json();
+            return data.text || '';
+        }
+
+        // Extract expressions using OpenAI GPT
+        async function extractExpressions(text) {
+            // Truncate if too long
+            const truncatedText = text.length > 12000 ? text.substring(0, 12000) + '\n\n[텍스트가 길어 일부만 분석됨]' : text;
+
+            const prompt = `당신은 학술 논문 작성 전문가입니다. 주어진 논문 텍스트에서 영어 학술 글쓰기에 유용한 표현들을 추출해주세요.
+
+## 추출 기준
+1. **연구 배경 제시** - 관심 증가, 중요성 강조 표현
+2. **연구 갭 지적** - 기존 연구 한계, 미해결 문제 표현  
+3. **연구 목적/가설** - 목표 제시 표현
+4. **방법론 설명** - 실험 설계, 데이터 수집, 분석 방법 표현
+5. **결과 제시** - 발견, 통계적 유의성 표현
+6. **해석/논의** - 의미 부여, 기존 연구와 비교 표현
+7. **한계점 인정** - 연구 제한점 인정 표현
+8. **향후 연구 제안** - 후속 연구 방향 제안 표현
+9. **연결어/전환 표현** - However, Furthermore, Nevertheless 등
+10. **학술 동사** - demonstrate, investigate, reveal, indicate 등
+
+## 출력 형식
+반드시 아래 JSON 형식으로만 출력하세요. 다른 설명은 추가하지 마세요.
+
+{
+  "sections": [
+    {
+      "category": "카테고리명",
+      "category_en": "Category Name in English", 
+      "expressions": [
+        {
+          "expression": "추출된 표현 (예: Despite extensive research on X, ...)",
+          "usage": "사용 상황 설명 (한국어)",
+          "example": "논문에서 사용된 실제 문장",
+          "difficulty": "basic|intermediate|advanced"
+        }
+      ]
+    }
+  ],
+  "academic_verbs": [
+    {
+      "verb": "동사",
+      "meaning": "의미 (한국어)",
+      "example": "예문"
+    }
+  ],
+  "transition_words": [
+    {
+      "word": "연결어",
+      "usage": "사용 상황",
+      "example": "예문"
+    }
+  ]
+}
+
+## 논문 텍스트
+${truncatedText}
+
+## 주의사항
+- 각 카테고리에서 최소 2개, 최대 5개의 표현을 추출하세요
+- 실제 논문에서 사용된 표현만 추출하세요
+- 한국어 설명을 포함하여 학습에 도움이 되게 해주세요
+- JSON 형식만 출력하고 다른 텍스트는 포함하지 마세요`;
+
+            const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${state.openaiKey}`
+                },
+                body: JSON.stringify({
+                    model: 'gpt-4o-mini',
+                    messages: [
+                        { role: 'user', content: prompt }
+                    ],
+                    temperature: 0.3,
+                    max_tokens: 4000
+                })
+            });
+
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(`OpenAI API 오류: ${error}`);
+            }
+
+            const data = await response.json();
+            const content = data.choices[0].message.content;
+
+            // Parse JSON from response
+            try {
+                // Handle potential markdown code blocks
+                let jsonStr = content;
+                if (content.includes('```json')) {
+                    jsonStr = content.split('```json')[1].split('```')[0].trim();
+                } else if (content.includes('```')) {
+                    jsonStr = content.split('```')[1].split('```')[0].trim();
+                }
+                return JSON.parse(jsonStr);
+            } catch (e) {
+                console.error('JSON parse error:', e);
+                throw new Error('응답 파싱 오류. 다시 시도해주세요.');
+            }
+        }
+
+        // Render Results
+        function renderResults() {
+            renderTab(state.currentTab);
+        }
+
+        function renderTab(tab) {
+            state.currentTab = tab;
+            
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(t => {
+                t.classList.toggle('active', t.dataset.tab === tab);
+            });
+
+            const data = state.extractedData;
+            let html = '';
+
+            if (tab === 'expressions') {
+                data.sections.forEach((section, index) => {
+                    html += `
+                        <div class="category" style="animation-delay: ${index * 0.1}s">
+                            <div class="category-header">
+                                <span class="category-name">${section.category}</span>
+                                <span class="category-name-en">${section.category_en}</span>
+                            </div>
+                            ${section.expressions.map(expr => `
+                                <div class="expression">
+                                    <div class="expression-header">
+                                        <span class="difficulty ${expr.difficulty}">${expr.difficulty}</span>
+                                        <span class="expression-text">${expr.expression}</span>
+                                    </div>
+                                    <dl class="expression-meta">
+                                        <dt>사용 상황</dt>
+                                        <dd>${expr.usage}</dd>
+                                        <dt>예문</dt>
+                                        <dd><em>${expr.example}</em></dd>
+                                    </dl>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                });
+            } else if (tab === 'verbs') {
+                html = `
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 20%">동사</th>
+                                <th style="width: 30%">의미</th>
+                                <th>예문</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${(data.academic_verbs || []).map(verb => `
+                                <tr>
+                                    <td><span class="verb-name">${verb.verb}</span></td>
+                                    <td>${verb.meaning}</td>
+                                    <td><em>${verb.example}</em></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } else if (tab === 'transitions') {
+                html = `
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 20%">연결어</th>
+                                <th style="width: 30%">사용 상황</th>
+                                <th>예문</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${(data.transition_words || []).map(tw => `
+                                <tr>
+                                    <td><span class="verb-name">${tw.word}</span></td>
+                                    <td>${tw.usage}</td>
+                                    <td><em>${tw.example}</em></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            }
+
+            tabContent.innerHTML = html;
+        }
+
+        // Tab Handlers
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                renderTab(tab.dataset.tab);
+            });
+        });
+
+        // Export Handlers
+        document.getElementById('export-anki').addEventListener('click', () => {
+            if (!state.extractedData) return;
+            
+            const data = state.extractedData;
+            let rows = [];
+
+            // Expressions
+            data.sections.forEach(section => {
+                section.expressions.forEach(expr => {
+                    const front = `${expr.expression}\n\n💡 ${expr.usage}`;
+                    const back = `📝 예문:\n${expr.example}\n\n📂 카테고리: ${section.category}`;
+                    rows.push(`${front}\t${back}`);
+                });
+            });
+
+            // Verbs
+            (data.academic_verbs || []).forEach(verb => {
+                const front = `🔤 Academic Verb: ${verb.verb}\n\n의미는?`;
+                const back = `✅ ${verb.meaning}\n\n📝 예문: ${verb.example}`;
+                rows.push(`${front}\t${back}`);
+            });
+
+            // Transitions
+            (data.transition_words || []).forEach(tw => {
+                const front = `🔗 Transition: ${tw.word}\n\n언제 사용?`;
+                const back = `✅ ${tw.usage}\n\n📝 예문: ${tw.example}`;
+                rows.push(`${front}\t${back}`);
+            });
+
+            downloadFile(rows.join('\n'), 'academic_expressions_anki.txt', 'text/plain');
+        });
+
+        document.getElementById('export-md').addEventListener('click', () => {
+            if (!state.extractedData) return;
+            
+            const data = state.extractedData;
+            let md = `# 📖 학술 표현 정리\n\n`;
+            md += `> 이 문서는 논문에서 자동 추출된 학술 표현을 정리한 것입니다.\n\n---\n\n`;
+            md += `## 난이도 범례\n- 🟢 Basic: 기본 표현\n- 🟡 Intermediate: 중급 표현\n- 🔴 Advanced: 고급 표현\n\n---\n\n`;
+
+            // Sections
+            data.sections.forEach(section => {
+                md += `## 📌 ${section.category}\n*${section.category_en}*\n\n`;
+                section.expressions.forEach(expr => {
+                    const emoji = { basic: '🟢', intermediate: '🟡', advanced: '🔴' }[expr.difficulty] || '⚪';
+                    md += `### ${emoji} \`${expr.expression}\`\n`;
+                    md += `- **사용 상황**: ${expr.usage}\n`;
+                    md += `- **예문**: _${expr.example}_\n\n`;
+                });
+            });
+
+            // Verbs
+            if (data.academic_verbs?.length) {
+                md += `---\n\n## 📚 학술 동사 모음\n\n`;
+                md += `| 동사 | 의미 | 예문 |\n|:-----|:-----|:-----|\n`;
+                data.academic_verbs.forEach(v => {
+                    md += `| **${v.verb}** | ${v.meaning} | ${v.example} |\n`;
+                });
+                md += '\n';
+            }
+
+            // Transitions
+            if (data.transition_words?.length) {
+                md += `---\n\n## 🔗 연결어/전환 표현\n\n`;
+                md += `| 표현 | 사용 상황 | 예문 |\n|:-----|:---------|:-----|\n`;
+                data.transition_words.forEach(tw => {
+                    md += `| **${tw.word}** | ${tw.usage} | ${tw.example} |\n`;
+                });
+            }
+
+            downloadFile(md, 'academic_expressions.md', 'text/markdown');
+        });
+
+        function downloadFile(content, filename, mimeType) {
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>
