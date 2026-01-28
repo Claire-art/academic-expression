@@ -1,7 +1,7 @@
 /*
   Academic Expression Learner
   - OCR: Upstage Document Digitization API
-  - Analysis: Upstage Chat Completions (OpenAI-compatible)
+  - Core expression analysis: OpenAI Chat Completions (GPT)
 
   Security note:
   - This is a static client-side app. API keys are used in the browser.
@@ -21,7 +21,12 @@ let state = {
   extractedData: null,
   pdfIndex: null,
   extractionMethod: null,
-  currentTab: 'expressions'
+  currentTab: 'expressions',
+  practice: {
+    targetExpression: '',
+    draft: '',
+    lastFeedback: null
+  }
 };
 
 // ----------------------------
@@ -257,7 +262,9 @@ async function extractExpressions(text) {
     ? text.substring(0, 14000) + '\n\n[텍스트가 길어 일부만 분석됨]'
     : text;
 
-  const prompt = `당신은 학술 논문 작성 전문가입니다. 주어진 논문 텍스트에서 영어 학술 글쓰기에 유용한 표현들을 추출해주세요.
+  const prompt = `당신은 학술 논문 작성 전문가이자 영어 글쓰기 튜터입니다. 주어진 논문 텍스트에서 영어 학술 글쓰기에 유용한 표현들을 추출하고, 학습자가 실제로 활용할 수 있도록 설명을 덧붙여주세요.
+
+중요: 내부적으로는 단계적으로 충분히 생각하되(Chain-of-Thought), 출력에는 사고 과정을 절대 포함하지 말고 **최종 JSON만** 출력하세요.
 
 ## 추출 기준
 1. **연구 배경 제시** - 관심 증가, 중요성 강조 표현
@@ -279,10 +286,15 @@ async function extractExpressions(text) {
     {
       "category": "카테고리명",
       "category_en": "Category Name in English",
+      "purpose": "이 카테고리가 어떤 문단/상황에서 쓰이는지 (한국어)",
+      "why_this_matters": "왜 이 카테고리 표현을 굳이 추출/학습해야 하는지 (한국어)",
+      "how_to_apply": "실전 글쓰기에서 어떻게 활용/변형하면 좋은지 (한국어, 팁/주의점)",
       "expressions": [
         {
           "expression": "추출된 표현 (예: Despite extensive research on X, ...)",
           "usage": "사용 상황 설명 (한국어)",
+          "why_important": "중요성/효과 (왜 좋은지) (한국어)",
+          "how_to_use": "내 글에서 어떻게 써먹는지(템플릿/변형/주의) (한국어)",
           "example": "논문에서 사용된 실제 문장",
           "difficulty": "basic|intermediate|advanced"
         }
@@ -312,6 +324,7 @@ ${truncatedText}
 - 각 카테고리에서 최소 2개, 최대 5개의 표현을 추출하세요
 - 실제 논문에서 사용된 표현만 추출하세요
 - 한국어 설명을 포함하여 학습에 도움이 되게 해주세요
+- 표현/팁은 과장하지 말고, 논문 문체(톤/완곡함/범위 제한)에 맞게 안내하세요
 - JSON 형식만 출력하고 다른 텍스트는 포함하지 마세요`;
 
   function extractJsonString(raw) {
@@ -705,21 +718,66 @@ function postProcessAnalysis(data, pdfIndex, fullText, method) {
     });
   }
 
-  // Sentence-based learning view.
+  // Idiom/phrase-only learning view.
   const sentences = extractSentences(fullText).slice(0, 250);
-  const sentenceInsights = sentences.map((s) => {
-    const citation = findCitationForSnippet(s, pageIndex);
-    const phrases = findPhrasesInSentence(s);
-    return { sentence: s, citation, phrases };
-  });
+  const phraseMap = new Map();
 
-  out.sentence_insights = {
+  for (const s of sentences) {
+    const phrases = findPhrasesInSentence(s);
+    if (!phrases.length) continue;
+    const citation = findCitationForSnippet(s, pageIndex);
+
+    for (const p of phrases) {
+      const key = normalizeForSearch(p.phrase);
+      if (!key) continue;
+      if (!phraseMap.has(key)) {
+        phraseMap.set(key, {
+          phrase: p.phrase,
+          usage: p.usage,
+          count: 0,
+          examples: [],
+          recommended: false
+        });
+      }
+      const entry = phraseMap.get(key);
+      entry.count += 1;
+      if (entry.examples.length < 2) {
+        entry.examples.push({ sentence: s, citation });
+      }
+    }
+  }
+
+  const items = [...phraseMap.values()].sort((a, b) => (b.count - a.count) || a.phrase.localeCompare(b.phrase));
+
+  // If detected idioms are too few, recommend additional items.
+  const targetTotal = 10;
+  const shouldRecommend = items.length < 5;
+  const seen = new Set(items.map((d) => normalizeForSearch(d.phrase)));
+
+  if (shouldRecommend) {
+    for (const item of LOCAL_ACADEMIC_PHRASES) {
+      if (items.length >= targetTotal) break;
+      const k = normalizeForSearch(item.phrase);
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      items.push({
+        phrase: item.phrase,
+        usage: item.usage,
+        count: 0,
+        examples: [],
+        recommended: true
+      });
+    }
+  }
+
+  out.idiom_insights = {
     method,
+    message: shouldRecommend ? '몇가지 더 추천해줄게요!' : '',
     note: pageIndex
-      ? '문장별로 페이지/줄을 자동 추정했습니다. PDF 레이아웃에 따라 줄 번호는 약간 어긋날 수 있습니다.'
+      ? '숙어/표현이 나온 문장에 한해 인용(p/line)을 자동 추정했습니다. PDF 레이아웃에 따라 줄 번호는 약간 어긋날 수 있습니다.'
       : '스캔 PDF는 줄/페이지 인용을 자동으로 추정하기 어렵습니다. (가능하면 텍스트가 포함된 PDF로도 함께 처리하면 정확도가 올라갑니다)'
     ,
-    items: sentenceInsights
+    items
   };
 
   // Expand verbs/transitions locally for richer coverage.
@@ -752,12 +810,22 @@ function renderTab(tab) {
 
   if (tab === 'expressions') {
     (data.sections || []).forEach((section, index) => {
+      const purpose = (section.purpose || '').trim();
+      const why = (section.why_this_matters || '').trim();
+      const how = (section.how_to_apply || '').trim();
       html += `
         <div class="category" style="animation-delay: ${index * 0.1}s">
           <div class="category-header">
             <span class="category-name">${escapeHtml(section.category)}</span>
             <span class="category-name-en">${escapeHtml(section.category_en)}</span>
           </div>
+          ${(purpose || why || how) ? `
+            <div style="margin: -0.5rem 0 1.25rem; color: var(--muted); font-size: 0.9rem;">
+              ${purpose ? `<div><strong>사용 상황:</strong> ${escapeHtml(purpose)}</div>` : ''}
+              ${why ? `<div style="margin-top: 0.35rem;"><strong>왜 중요한가:</strong> ${escapeHtml(why)}</div>` : ''}
+              ${how ? `<div style="margin-top: 0.35rem;"><strong>활용법:</strong> ${escapeHtml(how)}</div>` : ''}
+            </div>
+          ` : ''}
           ${(section.expressions || []).map((expr) => {
             const cite = expr.citation
               ? `p. ${expr.citation.page}, line ${expr.citation.lineStart}${expr.citation.lineEnd && expr.citation.lineEnd !== expr.citation.lineStart ? `–${expr.citation.lineEnd}` : ''}`
@@ -770,7 +838,15 @@ function renderTab(tab) {
                 </div>
                 <dl class="expression-meta">
                   <dt>사용 상황</dt>
-                  <dd>${escapeHtml(expr.usage)}</dd>
+                  <dd>${escapeHtml(expr.usage || '')}</dd>
+                  ${(expr.why_important || '').trim() ? `
+                    <dt>중요성</dt>
+                    <dd>${escapeHtml(expr.why_important)}</dd>
+                  ` : ''}
+                  ${(expr.how_to_use || '').trim() ? `
+                    <dt>활용 팁</dt>
+                    <dd>${escapeHtml(expr.how_to_use)}</dd>
+                  ` : ''}
                   <dt>예문</dt>
                   <dd><em>${escapeHtml(expr.example)}</em></dd>
                   <dt>인용</dt>
@@ -782,40 +858,46 @@ function renderTab(tab) {
         </div>
       `;
     });
-  } else if (tab === 'sentences') {
-    const items = data.sentence_insights?.items || [];
-    const note = data.sentence_insights?.note || '';
+  } else if (tab === 'idioms') {
+    const items = data.idiom_insights?.items || [];
+    const note = data.idiom_insights?.note || '';
+    const message = (data.idiom_insights?.message || '').trim();
+
+    const messageHtml = message
+      ? `<div class="card" style="padding: 1rem 1.25rem; margin-bottom: 1rem; border-left: 3px solid var(--accent);">${escapeHtml(message)}</div>`
+      : '';
 
     html = `
+      ${messageHtml}
       <div style="margin-bottom: 1rem; color: var(--muted); font-size: 0.9rem;">${escapeHtml(note)}</div>
       <table class="data-table">
         <thead>
           <tr>
-            <th style="width: 18%">인용</th>
-            <th>문장</th>
-            <th style="width: 30%">추천 숙어/표현</th>
+            <th style="width: 28%">숙어/표현</th>
+            <th style="width: 32%">사용 상황</th>
+            <th>예문(인용)</th>
           </tr>
         </thead>
         <tbody>
           ${items.map((it) => {
-            const cite = it.citation
-              ? `p. ${it.citation.page}, line ${it.citation.lineStart}${it.citation.lineEnd && it.citation.lineEnd !== it.citation.lineStart ? `–${it.citation.lineEnd}` : ''}`
-              : '-';
+            const badge = it.recommended
+              ? `<span style="margin-left: 0.5rem; font-size: 0.7rem; color: var(--warning); border: 1px solid var(--border); padding: 0.1rem 0.4rem; border-radius: 999px;">추천</span>`
+              : '';
 
-            const phrases = (it.phrases || []).length
-              ? (it.phrases || []).map((p) => `
-                  <div>
-                    <strong>${escapeHtml(p.phrase)}</strong><br>
-                    <span style="color: var(--muted);">${escapeHtml(p.usage)}</span>
-                  </div>
-                `).join('<hr style="border:0;border-top:1px solid var(--border);margin:0.5rem 0;">')
-              : '<span style="color: var(--muted);">(감지된 숙어 없음)</span>';
+            const examplesHtml = (it.examples || []).length
+              ? it.examples.map((ex) => {
+                  const cite = ex.citation
+                    ? `p. ${ex.citation.page}, line ${ex.citation.lineStart}${ex.citation.lineEnd && ex.citation.lineEnd !== ex.citation.lineStart ? `–${ex.citation.lineEnd}` : ''}`
+                    : '-';
+                  return `<div style="margin-bottom: 0.5rem;"><em>${escapeHtml(ex.sentence)}</em><div style="color: var(--muted); font-size: 0.8rem; margin-top: 0.15rem;">${escapeHtml(cite)}</div></div>`;
+                }).join('')
+              : '<span style="color: var(--muted);">(이 논문에서 발견된 예문 없음 — 아래 표현으로 직접 문장을 만들어보세요)</span>';
 
             return `
               <tr>
-                <td>${escapeHtml(cite)}</td>
-                <td>${escapeHtml(it.sentence)}</td>
-                <td>${phrases}</td>
+                <td><strong>${escapeHtml(it.phrase)}</strong>${badge}</td>
+                <td>${escapeHtml(it.usage || '')}</td>
+                <td>${examplesHtml}</td>
               </tr>
             `;
           }).join('')}
@@ -843,6 +925,35 @@ function renderTab(tab) {
         </tbody>
       </table>
     `;
+  } else if (tab === 'practice') {
+    const all = getAllExpressionsForPractice(data);
+    const options = all.length
+      ? all.map((e) => {
+          const label = `${e.expression} — ${e.category}`;
+          return `<option value="${escapeHtml(e.expression)}">${escapeHtml(label)}</option>`;
+        }).join('')
+      : '';
+
+    html = `
+      <div class="card" style="padding: 1.25rem;">
+        <div style="color: var(--muted); font-size: 0.9rem; margin-bottom: 1rem;">
+          추출된 표현을 실제 문단에 적용해보고, 피드백을 받아보세요. (출력은 최종 피드백만 제공되며 사고 과정은 공개하지 않습니다)
+        </div>
+
+        <label for="practice-target">연습할 표현 선택</label>
+        <select id="practice-target" style="width:100%; padding:0.875rem 1rem; border:1px solid var(--border); background: var(--paper); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; margin-bottom: 1rem;">
+          <option value="">(자동 선택: 랜덤/상위 표현 활용)</option>
+          ${options}
+        </select>
+
+        <label for="practice-draft">내 문단(영어) 입력</label>
+        <textarea id="practice-draft" rows="8" placeholder="Write your paragraph here..." style="width:100%; padding:0.875rem 1rem; border:1px solid var(--border); background: var(--paper); font-family: 'Noto Sans KR', sans-serif; font-size: 0.95rem; margin-bottom: 1rem; resize: vertical;"></textarea>
+
+        <button class="analyze-btn" id="practice-feedback-btn" style="width:auto; padding: 0.75rem 1.25rem;">피드백 받기</button>
+
+        <div id="practice-output" style="margin-top: 1rem;"></div>
+      </div>
+    `;
   } else if (tab === 'transitions') {
     html = `
       <table class="data-table">
@@ -867,6 +978,10 @@ function renderTab(tab) {
   }
 
   tabContent.innerHTML = html;
+
+  if (tab === 'practice') {
+    wirePracticeTab();
+  }
 }
 
 document.querySelectorAll('.tab').forEach((tab) => {
@@ -886,7 +1001,9 @@ document.getElementById('export-anki').addEventListener('click', () => {
 
   (data.sections || []).forEach((section) => {
     (section.expressions || []).forEach((expr) => {
-      const front = `${expr.expression}\n\n💡 ${expr.usage}`;
+      const why = (expr.why_important || '').trim();
+      const how = (expr.how_to_use || '').trim();
+      const front = `${expr.expression}\n\n💡 ${expr.usage || ''}${why ? `\n\n⭐ ${why}` : ''}${how ? `\n\n🧠 ${how}` : ''}`;
       const cite = expr.citation
         ? `\n\n📍 인용: p. ${expr.citation.page}, line ${expr.citation.lineStart}${expr.citation.lineEnd && expr.citation.lineEnd !== expr.citation.lineStart ? `–${expr.citation.lineEnd}` : ''}`
         : '';
@@ -920,10 +1037,16 @@ document.getElementById('export-md').addEventListener('click', () => {
 
   (data.sections || []).forEach((section) => {
     md += `## 📌 ${section.category}\n*${section.category_en}*\n\n`;
+    if ((section.purpose || '').trim()) md += `- **사용 상황**: ${section.purpose}\n`;
+    if ((section.why_this_matters || '').trim()) md += `- **왜 중요한가**: ${section.why_this_matters}\n`;
+    if ((section.how_to_apply || '').trim()) md += `- **활용법**: ${section.how_to_apply}\n`;
+    if ((section.purpose || section.why_this_matters || section.how_to_apply || '').trim()) md += `\n`;
     (section.expressions || []).forEach((expr) => {
       const emoji = { basic: '🟢', intermediate: '🟡', advanced: '🔴' }[expr.difficulty] || '⚪';
       md += `### ${emoji} \`${expr.expression}\`\n`;
-      md += `- **사용 상황**: ${expr.usage}\n`;
+      md += `- **사용 상황**: ${expr.usage || ''}\n`;
+      if ((expr.why_important || '').trim()) md += `- **중요성**: ${expr.why_important}\n`;
+      if ((expr.how_to_use || '').trim()) md += `- **활용 팁**: ${expr.how_to_use}\n`;
       md += `- **예문**: _${expr.example}_\n`;
       if (expr.citation) {
         md += `- **인용**: p. ${expr.citation.page}, line ${expr.citation.lineStart}${expr.citation.lineEnd && expr.citation.lineEnd !== expr.citation.lineStart ? `–${expr.citation.lineEnd}` : ''}\n`;
@@ -971,4 +1094,217 @@ function escapeHtml(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+// ----------------------------
+// Writing practice helpers
+// ----------------------------
+function getAllExpressionsForPractice(data) {
+  const out = [];
+  (data?.sections || []).forEach((section) => {
+    (section.expressions || []).forEach((expr) => {
+      const text = String(expr.expression || '').trim();
+      if (!text) return;
+      out.push({
+        expression: text,
+        category: section.category || '',
+        usage: expr.usage || '',
+        why_important: expr.why_important || '',
+        how_to_use: expr.how_to_use || ''
+      });
+    });
+  });
+  return out;
+}
+
+function wirePracticeTab() {
+  const btn = document.getElementById('practice-feedback-btn');
+  const targetEl = document.getElementById('practice-target');
+  const draftEl = document.getElementById('practice-draft');
+  const outEl = document.getElementById('practice-output');
+
+  if (!btn || !draftEl || !outEl) return;
+
+  // Avoid stacking multiple listeners if the user re-enters the tab.
+  if (btn.dataset.wired === '1') return;
+  btn.dataset.wired = '1';
+
+  btn.addEventListener('click', async () => {
+    try {
+      if (!state.openaiKey) throw new Error('OpenAI API Key가 필요합니다.');
+      if (!state.extractedData) throw new Error('먼저 PDF 분석을 완료해주세요.');
+
+      const draft = String(draftEl.value || '').trim();
+      if (draft.length < 40) throw new Error('문단이 너무 짧습니다. (최소 40자 이상 권장)');
+
+      const targetExpression = String(targetEl?.value || '').trim();
+      btn.classList.add('loading');
+      btn.disabled = true;
+      outEl.innerHTML = `<div style="color: var(--muted);">피드백 생성 중...</div>`;
+
+      const feedback = await getWritingFeedback(draft, targetExpression, state.extractedData);
+      state.practice.lastFeedback = feedback;
+
+      const score = feedback?.score || {};
+      const strengths = Array.isArray(feedback?.strengths) ? feedback.strengths : [];
+      const improvements = Array.isArray(feedback?.improvements) ? feedback.improvements : [];
+
+      outEl.innerHTML = `
+        <div class="card" style="padding: 1.25rem; margin-top: 1rem;">
+          <div style="display:flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+            <div style="font-size:0.85rem; color: var(--muted);">Score</div>
+            <div style="font-size:0.85rem;">Clarity: <strong>${escapeHtml(score.clarity ?? '-')}/10</strong></div>
+            <div style="font-size:0.85rem;">Academic tone: <strong>${escapeHtml(score.academic_tone ?? '-')}/10</strong></div>
+            <div style="font-size:0.85rem;">Grammar: <strong>${escapeHtml(score.grammar ?? '-')}/10</strong></div>
+          </div>
+
+          ${(feedback?.expression_usage?.target_expression || '').trim() ? `
+            <div style="margin-bottom: 1rem; color: var(--muted); font-size: 0.9rem;">
+              <strong>목표 표현:</strong> ${escapeHtml(feedback.expression_usage.target_expression)}
+              <span style="margin-left: 0.5rem;">(${feedback.expression_usage.used ? '사용됨' : '미사용'})</span>
+              ${(feedback?.expression_usage?.tips || '').trim() ? `<div style="margin-top: 0.35rem;">${escapeHtml(feedback.expression_usage.tips)}</div>` : ''}
+            </div>
+          ` : ''}
+
+          ${(feedback?.overall_feedback || '').trim() ? `
+            <div style="margin-bottom: 1rem;">
+              <div style="font-weight: 600; margin-bottom: 0.35rem;">총평</div>
+              <div style="color: var(--ink);">${escapeHtml(feedback.overall_feedback)}</div>
+            </div>
+          ` : ''}
+
+          ${(strengths.length) ? `
+            <div style="margin-bottom: 1rem;">
+              <div style="font-weight: 600; margin-bottom: 0.35rem;">좋았던 점</div>
+              <ul style="padding-left: 1.25rem;">
+                ${strengths.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}
+              </ul>
+            </div>
+          ` : ''}
+
+          ${(improvements.length) ? `
+            <div style="margin-bottom: 1rem;">
+              <div style="font-weight: 600; margin-bottom: 0.35rem;">개선 제안</div>
+              <ul style="padding-left: 1.25rem;">
+                ${improvements.map((s) => `<li>${escapeHtml(s)}</li>`).join('')}
+              </ul>
+            </div>
+          ` : ''}
+
+          ${(feedback?.rewrite_suggestion || '').trim() ? `
+            <div style="margin-bottom: 0.25rem; font-weight: 600;">개선된 문단 예시</div>
+            <div style="white-space: pre-wrap; background: var(--paper); border: 1px solid var(--border); padding: 0.875rem 1rem;">${escapeHtml(feedback.rewrite_suggestion)}</div>
+          ` : ''}
+        </div>
+      `;
+    } catch (e) {
+      outEl.innerHTML = `<div style="color: #b00020;">오류: ${escapeHtml(e.message || String(e))}</div>`;
+    } finally {
+      btn.classList.remove('loading');
+      btn.disabled = false;
+    }
+  });
+}
+
+async function getWritingFeedback(draft, targetExpression, extractedData) {
+  const all = getAllExpressionsForPractice(extractedData);
+  const suggestions = all.slice(0, 12);
+  const suggestedText = suggestions.map((e) => `- ${e.expression} (카테고리: ${e.category})`).join('\n');
+
+  const prompt = `당신은 academic writing tutor입니다.
+
+중요: 내부적으로는 단계적으로 충분히 생각하되(Chain-of-Thought), 출력에는 사고 과정을 절대 포함하지 말고 **최종 JSON만** 출력하세요.
+
+목표:
+- 학습자의 영작 문단을 학술적 톤/명확성/문법 관점에서 피드백
+- 가능하면 아래 표현(또는 유사 템플릿)을 자연스럽게 사용하도록 유도
+
+추천 표현 목록:
+${suggestedText}
+
+사용자가 선택한 목표 표현(비어있으면 임의 선택/혼합):
+${targetExpression || '(선택 없음)'}
+
+사용자 문단:
+"""
+${draft}
+"""
+
+출력 JSON 스키마:
+{
+  "overall_feedback": "총평 (한국어)",
+  "strengths": ["좋았던 점"],
+  "improvements": ["개선 제안"],
+  "rewrite_suggestion": "가능하면 1문단으로 더 학술적으로 다듬은 버전(영어)",
+  "score": {"clarity": 1, "academic_tone": 1, "grammar": 1},
+  "expression_usage": {
+    "target_expression": "목표 표현",
+    "used": true,
+    "tips": "목표 표현을 자연스럽게 넣는 팁 (한국어)"
+  }
+}
+
+주의:
+- 점수는 1~10 정수
+- 너무 공격적으로 고치지 말고 원문 의미를 유지
+- JSON 외 텍스트 금지`;
+
+  const body = {
+    model: 'gpt-4o-mini',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.4,
+    max_tokens: 1200,
+    response_format: { type: 'json_object' }
+  };
+
+  let resp = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${state.openaiKey}`
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    if (String(errText).toLowerCase().includes('response_format')) {
+      delete body.response_format;
+      resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${state.openaiKey}`
+        },
+        body: JSON.stringify(body)
+      });
+    } else {
+      throw new Error(`OpenAI API 오류: ${errText}`);
+    }
+  }
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`OpenAI API 오류: ${errText}`);
+  }
+
+  const data = await resp.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) {
+    const id = data?.id ?? 'n/a';
+    const finish = data?.choices?.[0]?.finish_reason ?? 'n/a';
+    throw new Error(`OpenAI 모델 응답이 비어있습니다. (id=${id}, finish_reason=${finish})`);
+  }
+
+  try {
+    return JSON.parse(content);
+  } catch {
+    const s = String(content);
+    const first = s.indexOf('{');
+    const last = s.lastIndexOf('}');
+    if (first !== -1 && last !== -1 && last > first) {
+      return JSON.parse(s.slice(first, last + 1));
+    }
+    throw new Error('피드백 응답 파싱 오류. 다시 시도해주세요.');
+  }
 }
