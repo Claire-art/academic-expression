@@ -638,11 +638,11 @@
                 <h2 class="card-title">API 설정</h2>
                 
                 <div class="api-section">
-                    <label for="upstage-key">Upstage API Key (선택)</label>
+                    <label for="upstage-key">Upstage API Key</label>
                     <input type="password" id="upstage-key" placeholder="up_xxxxxxxx">
                     <div class="api-status">
                         <span class="status-dot" id="upstage-status"></span>
-                        <span>스캔 PDF(OCR 필요)일 때만 사용</span>
+                        <span>PDF 텍스트(OCR) 추출에 사용됩니다</span>
                     </div>
                 </div>
 
@@ -806,7 +806,7 @@
         }
 
         function updateAnalyzeButton() {
-            const ready = state.openaiKey && state.file;
+            const ready = state.upstageKey && state.openaiKey && state.file;
             analyzeBtn.disabled = !ready;
         }
 
@@ -985,15 +985,16 @@
             { phrase: "from the perspective of", usage: "관점 전환" }
         ];
 
-        // Extract text from PDF using PDF.js (preferred for page/line citations). Fallback to Upstage OCR when needed.
+        // Extract text from PDF using Upstage OCR (required). PDF.js is used only as a helper to build page/line indices when possible.
         async function extractTextFromPDF(file) {
             const arrayBuffer = await file.arrayBuffer();
 
-            // 1) Try PDF.js text layer extraction first
+            // Helper: build a PDF.js index when the PDF already contains selectable text
+            // (this can improve citation matching, even though the main text comes from OCR)
+            let pdfIndex = null;
             try {
                 const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
                 const pages = [];
-                let fullText = '';
 
                 for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
                     const page = await pdf.getPage(pageNumber);
@@ -1035,23 +1036,19 @@
                         if (lineText) lines.push(lineText);
                     }
 
-                    const pageText = lines.join('\n');
                     pages.push({ pageNumber, lines });
-                    fullText += `\n\n[Page ${pageNumber}]\n` + pageText;
                 }
 
-                const cleaned = fullText.replace(/\n{3,}/g, '\n\n').trim();
-                if (cleaned.length >= 200) {
-                    return { fullText: cleaned, pdfIndex: pages, method: 'pdfjs' };
-                }
+                // Only keep it if it looks non-empty
+                const totalChars = pages.reduce((acc, p) => acc + p.lines.join(' ').length, 0);
+                if (totalChars >= 200) pdfIndex = pages;
             } catch (e) {
-                // fall through to OCR if configured
-                console.warn('PDF.js extraction failed; may fallback to OCR:', e);
+                console.warn('PDF.js index build failed (OK for scanned PDFs):', e);
             }
 
-            // 2) Fallback: Upstage OCR (no reliable page/line citations)
+            // Upstage OCR is required
             if (!state.upstageKey) {
-                throw new Error('PDF 텍스트를 추출하지 못했습니다. (스캔 PDF라면 Upstage API Key를 입력해 OCR을 사용하세요)');
+                throw new Error('Upstage API Key가 필요합니다. (스캔 PDF OCR을 위해 필수)');
             }
 
             const formData = new FormData();
@@ -1073,7 +1070,7 @@
 
             const data = await response.json();
             const text = (data.text || '').trim();
-            return { fullText: text, pdfIndex: null, method: 'upstage-ocr' };
+            return { fullText: text, pdfIndex, method: 'upstage-ocr' };
         }
 
         function normalizeForSearch(s) {

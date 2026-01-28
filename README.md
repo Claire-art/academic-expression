@@ -42,7 +42,10 @@ git push -u origin main
 
 ## 🔑 API 키 준비
 
-이 앱은 기본적으로 OpenAI API Key가 필요하며, 스캔 PDF(OCR 필요)일 때만 Upstage API Key가 필요합니다.
+이 앱을 사용하려면 두 개의 API 키가 필요합니다:
+
+- Upstage API Key: 논문 PDF에서 텍스트(OCR) 추출 (필수)
+- OpenAI API Key: 학술 표현/동사/연결어 분석 (필수)
 
 ### Upstage API Key
 1. [Upstage Console](https://console.upstage.ai/) 접속
